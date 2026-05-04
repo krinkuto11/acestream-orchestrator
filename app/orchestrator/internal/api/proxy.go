@@ -222,7 +222,12 @@ func (s *ProxyServer) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	cs.Stream(r.Context())
 
 	if cm.LocalCount() == 0 {
-		s.hub.ScheduleShutdown(streamKey, config.C.Load().ChannelShutdownDelay)
+		if mgr != nil && !mgr.Connected() {
+			slog.Info("terminating stream on client disconnect during initialization", "stream", streamKey)
+			s.hub.StopStream(streamKey)
+		} else {
+			s.hub.ScheduleShutdown(streamKey, config.C.Load().ChannelShutdownDelay)
+		}
 	}
 }
 
