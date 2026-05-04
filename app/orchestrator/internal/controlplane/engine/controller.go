@@ -547,28 +547,28 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 	}
 
 	// Stabilization window: if ANY ready node has been healthy for less than
-	// rebalanceStabilizeFor, skip rebalancing entirely. This prevents a burst
-	// of engine kills right after cold-boot when nodes come up within seconds
-	// of each other.
-	const rebalanceStabilizeFor = 20 * time.Second
+	// rebalanceStabilizeFor, skip rebalancing entirely.
+	const rebalanceStabilizeFor = 5 * time.Second
 	if !skipDensityRebalancing {
 		for _, n := range allVPNNodes {
 			if st.IsVPNNodeDraining(n.ContainerName) {
 				continue
 			}
 			if n.HealthySince != nil && time.Since(*n.HealthySince) < rebalanceStabilizeFor {
-				skipDensityRebalancing = true
-				break
+				// EXCEPTION: If we have all required infrastructure ready, we MUST
+				// rebalance to provide relief to over-saturated nodes.
+				if readyCount < requiredNodes {
+					skipDensityRebalancing = true
+					break
+				}
 			}
 		}
 	}
 
-	// Cluster-level stabilization: do not rebalance for 15s after a scale-up
+	// Cluster-level stabilization: do not rebalance for 10s after a scale-up
 	// to prevent thrashing.
-	if !skipDensityRebalancing && !c.lastScaleUp.IsZero() && time.Since(c.lastScaleUp) < 15*time.Second {
-		// EXCEPTION: If we have all required infrastructure ready, we MUST
-		// rebalance to provide relief to over-saturated nodes, even if
-		// the stability shield is active.
+	if !skipDensityRebalancing && !c.lastScaleUp.IsZero() && time.Since(c.lastScaleUp) < 10*time.Second {
+		// EXCEPTION: Relief hatch for ready infrastructure.
 		if readyCount < requiredNodes {
 			skipDensityRebalancing = true
 		}
@@ -580,15 +580,11 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 
 	for vpnName, vpnEngines := range activeByVPN {
 		// Only rebalance if we have more than one engine on this node.
-		// A single engine node can never be "over-balanced" in a way we can fix.
 		if len(vpnEngines) <= 1 {
 			continue
 		}
 
 		if len(vpnEngines) > effectiveLimit {
-			if skipDensityRebalancing {
-				continue
-			}
 			// Check if rebalance already in progress
 			allOnNode := st.GetEnginesByVPN(vpnName)
 			alreadyDraining := false
@@ -617,11 +613,11 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 				return st.GetEngineTotalLoad(followers[i].ContainerID) < st.GetEngineTotalLoad(followers[j].ContainerID)
 			})
 
-			// Only drain engines that have been around long enough to be stable (> 30s)
+			// Only drain engines that have been around long enough to be stable (> 10s)
 			// to avoid killing engines that were just created during a burst.
 			var stableFollowers []*state.Engine
 			for _, e := range followers {
-				if time.Since(e.FirstSeen) > 30*time.Second {
+				if time.Since(e.FirstSeen) > 10*time.Second {
 					stableFollowers = append(stableFollowers, e)
 				}
 			}
