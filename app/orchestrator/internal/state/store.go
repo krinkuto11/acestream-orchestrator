@@ -681,9 +681,18 @@ func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// 1. Calculate aggregate load per VPN node to identify "less used" infra.
+	vpnLoads := make(map[string]int)
+	for cid, engine := range s.engines {
+		if engine.VPNContainer != "" {
+			vpnLoads[engine.VPNContainer] += s.streamCounts[cid] + s.enginePending[cid] + s.monitorCounts[cid]
+		}
+	}
+
 	type candidate struct {
-		e    *Engine
-		load int
+		e       *Engine
+		load    int
+		vpnLoad int
 	}
 	var candidates []candidate
 	now := time.Now().UTC()
@@ -699,29 +708,47 @@ func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
 
 		// Settle delay: if an engine was assigned a stream very recently, give it
 		// a few seconds to handle the intensive pre-buffering phase before
-		// assigning another one. This prevents API timeouts when multiple
-		// LoadAndStart operations overlap.
+		// assigning another one.
 		if load >= 1 && time.Since(e.LastAssignedAt) < 5*time.Second {
 			continue
 		}
 
-		candidates = append(candidates, candidate{e, load})
+		candidates = append(candidates, candidate{
+			e:       e,
+			load:    load,
+			vpnLoad: vpnLoads[e.VPNContainer],
+		})
 	}
 
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no eligible engine (total=%d)", len(s.engines))
 	}
 
-	// Sort by load, then by LastAssignedAt (to spread load across engines),
-	// then by forwarded status.
+	// 2. Sort by "Performance & Stability".
+	// We want to pick engines that provide the best playback experience.
 	sort.Slice(candidates, func(i, j int) bool {
+		// A. Prioritize lower individual engine load (primary factor).
 		if candidates[i].load != candidates[j].load {
 			return candidates[i].load < candidates[j].load
 		}
+
+		// B. Prioritize engines on "quieter" VPN nodes (secondary factor).
+		// Spreading streams across VPN nodes reduces the blast radius of a VPN drop.
+		if candidates[i].vpnLoad != candidates[j].vpnLoad {
+			return candidates[i].vpnLoad < candidates[j].vpnLoad
+		}
+
+		// C. Prefer Leaders (forwarded) over Followers (non-forwarded).
+		// User feedback: Streams run better on P2P leader engines.
+		if candidates[i].e.Forwarded != candidates[j].e.Forwarded {
+			return candidates[i].e.Forwarded // true < false? No, we want true first.
+		}
+
+		// D. Final tie-breaker: oldest LastAssignedAt (most time to settle).
 		if !candidates[i].e.LastAssignedAt.Equal(candidates[j].e.LastAssignedAt) {
 			return candidates[i].e.LastAssignedAt.Before(candidates[j].e.LastAssignedAt)
 		}
-		return candidates[i].e.Forwarded && !candidates[j].e.Forwarded
+		return false
 	})
 
 	sel := candidates[0].e
