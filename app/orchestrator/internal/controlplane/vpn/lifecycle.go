@@ -152,7 +152,15 @@ func (lm *LifecycleManager) reconcileScale(ctx context.Context) {
 		preferred = 4
 	}
 	if engineDemand > 0 {
-		desiredVPNs = int(math.Ceil(float64(engineDemand) / float64(preferred)))
+		// Use a utilization target of 80% to scale up infrastructure BEFORE
+		// we hit 100% capacity. This ensures Node 2 is provisioning while
+		// Node 1 is still absorbing the burst.
+		const utilizationTarget = 0.8
+		effectivePreferred := float64(preferred) * utilizationTarget
+		if effectivePreferred < 1 {
+			effectivePreferred = 1
+		}
+		desiredVPNs = int(math.Ceil(float64(engineDemand) / effectivePreferred))
 	}
 	// Cap by available credential slots.
 	if lm.prov != nil {
