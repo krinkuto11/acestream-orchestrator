@@ -125,10 +125,12 @@ func (c *Controller) EnsureMinimum() {
 
 	desired, _ := computeDesiredReplicas(totalRunning, freeCount, streamCounts, monitorCounts, engines)
 	prev := st.GetDesiredReplicas()
-	// Never silently undo a NudgeDemand bump: the proxy may have raised
-	// desiredReplicas above what the autoscaler computed. Take the higher value
-	// so demand-triggered provisioning isn't cancelled by the next ticker tick.
-	if prev > desired {
+
+	// Never silently undo a NudgeDemand bump while provisioning is in flight.
+	// If current running count is less than the previous desired count, it means
+	// we are still waiting for engines to register. Keep the higher value.
+	// Once totalRunning catches up, we allow load-based scaling down.
+	if totalRunning < prev && prev > desired {
 		desired = prev
 	}
 	st.SetDesiredReplicas(desired)
@@ -143,13 +145,12 @@ func (c *Controller) EnsureMinimum() {
 func computeDesiredReplicas(totalRunning, freeCount int, streamCounts, monitorCounts map[string]int, engines []*state.Engine) (int, string) {
 	cfg := config.C.Load()
 
-	// Idle pool deficit
+	// Base requirement: engines currently serving streams or monitor sessions.
+	occupiedCount := totalRunning - freeCount
+	desired := occupiedCount + cfg.MinFreeReplicas
+
 	idleDeficit := max(0, cfg.MinFreeReplicas-freeCount)
-	desired := totalRunning + idleDeficit
-	desc := fmt.Sprintf("replenishing idle pool (missing %d, free %d/%d)", idleDeficit, freeCount, cfg.MinFreeReplicas)
-	if idleDeficit == 0 {
-		desc = fmt.Sprintf("idle pool satisfied (free %d/%d)", freeCount, cfg.MinFreeReplicas)
-	}
+	desc := fmt.Sprintf("load-based scaling (occupied %d, buffer %d, missing %d)", occupiedCount, cfg.MinFreeReplicas, idleDeficit)
 
 	// Lookahead: if ANY engine is near stream capacity, pre-emptively scale out.
 	// Mirrors Python autoscaler._compute_desired_replicas exactly.
