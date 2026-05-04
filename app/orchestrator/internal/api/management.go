@@ -1501,6 +1501,19 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						"memory_usage":   map[string]string{"type": "integer"},
 						"vpn_container":  map[string]string{"type": "string"},
 					},
+					"example": map[string]any{
+						"container_id":   "8a3f9e2b1c",
+						"container_name": "ace-engine-1",
+						"host":           "172.18.0.5",
+						"port":           8621,
+						"api_port":       19001,
+						"health_status":  "healthy",
+						"draining":       false,
+						"stream_count":   2,
+						"cpu_percent":    12.5,
+						"memory_usage":   256000000,
+						"vpn_container":  "gluetun-nordvpn",
+					},
 				},
 				"Stream": map[string]any{
 					"type": "object",
@@ -1517,6 +1530,19 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						"speed_up":       map[string]string{"type": "integer"},
 						"started_at":     map[string]string{"type": "string", "format": "date-time"},
 					},
+					"example": map[string]any{
+						"id":             "7f8e9d0c",
+						"content_id":     "acestream://3654576326c596323675432657326c3236c59632",
+						"status":         "playing",
+						"container_id":   "8a3f9e2b1c",
+						"container_name": "ace-engine-1",
+						"active_clients": 5,
+						"bitrate":        4500000,
+						"peers":          120,
+						"speed_down":     512,
+						"speed_up":       128,
+						"started_at":     "2026-05-02T12:00:00Z",
+					},
 				},
 				"VPNNode": map[string]any{
 					"type": "object",
@@ -1528,6 +1554,41 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						"provider":       map[string]string{"type": "string"},
 						"control_host":   map[string]string{"type": "string"},
 					},
+					"example": map[string]any{
+						"container_name": "gluetun-nordvpn",
+						"container_id":   "c4d5e6f7",
+						"status":         "healthy",
+						"healthy":        true,
+						"provider":       "nordvpn",
+						"control_host":   "172.18.0.2",
+					},
+				},
+				"Status": map[string]any{
+					"type": "object",
+					"example": map[string]any{
+						"status": "healthy",
+						"engines": map[string]int{
+							"total":     10,
+							"running":   8,
+							"healthy":   8,
+							"unhealthy": 0,
+							"draining":  0,
+						},
+						"streams": map[string]int{
+							"active": 15,
+							"total":  15,
+						},
+						"proxy": map[string]int{
+							"active_clients": 42,
+						},
+					},
+				},
+				"Message": map[string]any{
+					"type": "object",
+					"example": map[string]string{
+						"status":  "ok",
+						"message": "Operation completed successfully",
+					},
 				},
 			},
 		},
@@ -1537,7 +1598,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"Orchestrator"},
 					"summary": "Full system status",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Status"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1546,7 +1614,17 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"Orchestrator"},
 					"summary": "Simplified health check",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":    "object",
+										"example": map[string]string{"status": "healthy"},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1574,7 +1652,21 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"Engines"},
 					"summary": "Aggregated stats for all engines",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"cpu_percent_avg": 15.2,
+											"memory_usage_total": 1024000000,
+											"engine_count": 10,
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1586,7 +1678,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Engine"},
+								},
+							},
+						},
 						"404": map[string]any{"description": "Not Found"},
 					},
 				},
@@ -1595,7 +1694,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Dismantle an engine",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"202": map[string]any{"description": "Accepted"},
+						"202": map[string]any{
+							"description": "Accepted",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1607,7 +1713,20 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"cpu_percent": 12.5,
+											"memory_usage": 256000000,
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1620,7 +1739,18 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "tail", "in": "query", "schema": map[string]string{"type": "string", "default": "100"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "array",
+										"items": map[string]string{"type": "string"},
+										"example": []string{"[INFO] Starting AceStream engine...", "[INFO] Listening on port 8621"},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1649,7 +1779,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Stop multiple streams at once",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1662,7 +1799,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1674,7 +1818,24 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "array",
+										"items": map[string]any{
+											"type": "object",
+											"example": map[string]any{
+												"timestamp": 1625232000,
+												"bitrate": 4500000,
+												"peers": 120,
+											},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1702,7 +1863,20 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"VPN"},
 					"summary": "VPN connectivity status",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"connected": true,
+											"active_nodes": 2,
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1711,7 +1885,17 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"VPN"},
 					"summary": "Detected public IP of the orchestrator/VPN",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]string{"ip": "1.2.3.4"},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1721,7 +1905,20 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Fetch all persistent settings",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"engine_settings": map[string]any{"buffer": 30},
+											"orchestrator": map[string]any{"min_replicas": 5},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 				"post": map[string]any{
@@ -1729,7 +1926,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Update multiple settings categories",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1741,7 +1945,17 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "category", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{"buffer": 30, "memory_mode": true},
+									},
+								},
+							},
+						},
 					},
 				},
 				"post": map[string]any{
@@ -1752,7 +1966,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "category", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1761,7 +1982,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"Observability"},
 					"summary": "High-level dashboard metrics snapshot",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Dashboard"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1773,7 +2001,24 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "limit", "in": "query", "schema": map[string]string{"type": "integer", "default": "50"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "array",
+										"items": map[string]any{
+											"type": "object",
+											"example": map[string]any{
+												"timestamp": "2026-05-02T12:00:00Z",
+												"event_type": "engine_started",
+												"message": "Engine ace-engine-1 started successfully",
+											},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1782,7 +2027,20 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"Observability"},
 					"summary": "Aggregated event statistics",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"total_events": 150,
+											"errors": 2,
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1791,7 +2049,21 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"Observability"},
 					"summary": "Internal cache hit/miss statistics",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"hits": 1200,
+											"misses": 45,
+											"ratio": 0.96,
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1801,7 +2073,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Manually trigger engine provisioning",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1811,7 +2090,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Force a state reconciliation loop",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1820,7 +2106,17 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"Orchestrator"},
 					"summary": "Get circuit breaker state",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]string{"state": "closed"},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1829,7 +2125,21 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":    []string{"Orchestrator"},
 					"summary": "Orchestrator version and build info",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]string{
+											"version": "1.2.4",
+											"commit": "8f3e2b1",
+											"build_time": "2026-05-01T10:00:00Z",
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1839,7 +2149,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Trigger garbage collection of idle engines",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1852,7 +2169,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "demand", "in": "path", "required": true, "schema": map[string]string{"type": "integer"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1865,7 +2189,17 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "label", "in": "query", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]string{"$ref": "#/components/schemas/Engine"},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1875,7 +2209,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Provision a new VPN node",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1888,7 +2229,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "name", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1901,7 +2249,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "name", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1911,7 +2266,20 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Export all settings as a JSON bundle",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "JSON bundle"},
+						"200": map[string]any{
+							"description": "JSON bundle",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"engine": map[string]any{"buffer": 30},
+											"vpn":    map[string]any{"enabled": true},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1921,7 +2289,14 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"summary":  "Import a settings bundle",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "OK"},
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -1933,7 +2308,17 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						{"name": "url", "in": "query", "required": true, "schema": map[string]string{"type": "string"}},
 					},
 					"responses": map[string]any{
-						"200": map[string]any{"description": "M3U Content"},
+						"200": map[string]any{
+							"description": "M3U Content",
+							"content": map[string]any{
+								"text/plain": map[string]any{
+									"schema": map[string]any{
+										"type":    "string",
+										"example": "#EXTM3U\n#EXTINF:-1,Sample Stream\nhttp://orchestrator:8000/ace/getstream?id=...",
+									},
+								},
+							},
+						},
 					},
 				},
 			},
