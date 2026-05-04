@@ -485,11 +485,22 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 	// soft limit, but respect MaxEnginesPerVPN as a hard limit.
 	chosen, load := st.SelectAndClaimVPN(readyNames, effectiveLimit)
 
-	if chosen == "" && cfg.MaxEnginesPerVPN > effectiveLimit {
-		chosen, load = st.SelectAndClaimVPN(readyNames, cfg.MaxEnginesPerVPN)
-		if chosen != "" {
-			slog.Info("scheduling engine above preferred limit (soft overflow)",
-				"vpn", chosen, "load", load, "preferred_limit", effectiveLimit, "hard_limit", cfg.MaxEnginesPerVPN)
+	if chosen == "" {
+		// If all healthy nodes are at their preferred density limit, check if
+		// we are currently provisioning new VPN nodes. If so, block engine
+		// creation with a transient error so that the new engine is scheduled
+		// on a fresh, under-limit VPN node once it becomes ready.
+		pendingVPNs := st.ListNotReadyVPNNodes()
+		if len(pendingVPNs) > 0 {
+			return "", fmt.Errorf("all VPN nodes at preferred capacity; awaiting %d pending VPN nodes - cannot overflow yet", len(pendingVPNs))
+		}
+
+		if cfg.MaxEnginesPerVPN > effectiveLimit {
+			chosen, load = st.SelectAndClaimVPN(readyNames, cfg.MaxEnginesPerVPN)
+			if chosen != "" {
+				slog.Info("scheduling engine above preferred limit (soft overflow)",
+					"vpn", chosen, "load", load, "preferred_limit", effectiveLimit, "hard_limit", cfg.MaxEnginesPerVPN)
+			}
 		}
 	}
 	if chosen == "" {

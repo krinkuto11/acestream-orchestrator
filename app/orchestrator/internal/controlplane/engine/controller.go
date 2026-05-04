@@ -182,11 +182,15 @@ func computeDesiredReplicas(totalRunning, freeCount int, streamCounts, monitorCo
 						numNear++
 					}
 				}
-				lookaheadDesired := totalRunning + numNear
+				// Proactive burst: add one replica for each engine that is near capacity.
+				// Clamp to a maximum of 2 new replicas per cycle to avoid slamming Docker/VPN network.
+				maxLookaheadBurst := 2
+				burst := min(numNear, maxLookaheadBurst)
+				lookaheadDesired := totalRunning + burst
 				if lookaheadDesired > desired {
 					desired = lookaheadDesired
 				}
-				desc = fmt.Sprintf("lookahead triggered (%d engines near capacity at threshold %d)", numNear, threshold)
+				desc = fmt.Sprintf("lookahead triggered (%d engines near capacity, adding burst of %d, threshold %d)", numNear, burst, threshold)
 				st.SetLookaheadLayer(minLoad)
 			}
 		} else if lookahead != nil && minLoad < *lookahead {
@@ -559,7 +563,17 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 			sort.Slice(followers, func(i, j int) bool {
 				return st.GetEngineTotalLoad(followers[i].ContainerID) < st.GetEngineTotalLoad(followers[j].ContainerID)
 			})
-			toDrain := followers
+
+			// Only drain engines that have been around long enough to be stable (> 30s)
+			// to avoid killing engines that were just created during a burst.
+			var stableFollowers []*state.Engine
+			for _, e := range followers {
+				if time.Since(e.FirstSeen) > 30*time.Second {
+					stableFollowers = append(stableFollowers, e)
+				}
+			}
+
+			toDrain := stableFollowers
 			if len(toDrain) > excess {
 				toDrain = toDrain[:excess]
 			}
