@@ -173,7 +173,7 @@ func (lm *LifecycleManager) reconcileScale(ctx context.Context) {
 	// Count active (non-draining) dynamic nodes.
 	actualVPNs := st.CountActiveDynamicVPNNodes()
 
-	slog.Info("VPN scaling math",
+	slog.Debug("VPN scaling math",
 		"engine_demand", engineDemand,
 		"preferred_per_vpn", preferred,
 		"desired_vpns", desiredVPNs,
