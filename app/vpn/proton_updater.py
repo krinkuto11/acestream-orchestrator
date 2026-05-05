@@ -107,6 +107,7 @@ class ProtonFilterConfig:
     secure_core: str = "include"
     tor: str = "include"
     free_tier: str = "include"
+    p2p: str = "include"
 
     def validate(self) -> None:
         for key, value in (
@@ -114,6 +115,7 @@ class ProtonFilterConfig:
             ("secure_core", self.secure_core),
             ("tor", self.tor),
             ("free_tier", self.free_tier),
+            ("p2p", self.p2p),
         ):
             if value not in _FILTER_VALUES:
                 raise ValueError(f"Invalid filter '{key}': {value}. Allowed values: include|exclude|only")
@@ -271,6 +273,12 @@ class ProtonServerUpdater:
                 continue
             if not self._matches_filter(is_free, filters.free_tier):
                 continue
+            if not self._matches_filter(is_p2p, filters.p2p):
+                continue
+
+            # Skip logical servers that are marked as down (Status=0)
+            if self._coerce_int(logical.get("Status"), 1) == 0:
+                continue
 
             physical_nodes = logical.get("Servers")
             if not isinstance(physical_nodes, list):
@@ -283,6 +291,10 @@ class ProtonServerUpdater:
                 domain = str(physical.get("Domain") or "").strip().lower()
                 entry_ip = str(physical.get("EntryIP") or "").strip()
                 if not domain or not entry_ip:
+                    continue
+
+                # Skip physical servers that are marked as down (Status=0)
+                if self._coerce_int(physical.get("Status"), 1) == 0:
                     continue
 
                 physical_total += 1
@@ -498,6 +510,7 @@ class ProtonServerUpdater:
                     "secure_core": applied_filters.secure_core,
                     "tor": applied_filters.tor,
                     "free_tier": applied_filters.free_tier,
+                    "p2p": applied_filters.p2p,
                 },
                 "stats": stats,
                 "totp_used": bool(code),

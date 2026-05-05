@@ -32,6 +32,12 @@ const PROTON_CREDENTIALS_SOURCE_OPTIONS = [
   { value: 'settings', label: 'Store in Settings' },
 ]
 
+const PROTON_FILTER_OPTIONS = [
+  { value: 'include', label: 'Include' },
+  { value: 'exclude', label: 'Exclude' },
+  { value: 'only', label: 'Only' },
+]
+
 const DEFAULTS = {
   enabled: false,
   api_port: 8001,
@@ -59,6 +65,9 @@ const DEFAULTS = {
   vpn_servers_proton_password: '',
   vpn_servers_proton_totp_code: '',
   vpn_servers_proton_totp_secret: '',
+  vpn_servers_proton_filter_p2p: 'include',
+  vpn_servers_proton_filter_secure_core: 'include',
+  vpn_servers_proton_filter_tor: 'include',
   wireguard_mtu: 0,
 }
 
@@ -241,6 +250,9 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         vpn_servers_proton_password: String(payload?.vpn_servers_proton_password || ''),
         vpn_servers_proton_totp_code: String(payload?.vpn_servers_proton_totp_code || ''),
         vpn_servers_proton_totp_secret: String(payload?.vpn_servers_proton_totp_secret || ''),
+        vpn_servers_proton_filter_p2p: String(payload?.vpn_servers_proton_filter_p2p || 'include'),
+        vpn_servers_proton_filter_secure_core: String(payload?.vpn_servers_proton_filter_secure_core || 'include'),
+        vpn_servers_proton_filter_tor: String(payload?.vpn_servers_proton_filter_tor || 'include'),
         wireguard_mtu: toNumber(payload?.wireguard_mtu, DEFAULTS.wireguard_mtu),
       }
       setInitialState(normalized)
@@ -300,6 +312,9 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           vpn_servers_proton_password: String(draft.vpn_servers_proton_password || '').trim() || null,
           vpn_servers_proton_totp_code: String(draft.vpn_servers_proton_totp_code || '').trim() || null,
           vpn_servers_proton_totp_secret: String(draft.vpn_servers_proton_totp_secret || '').trim() || null,
+          vpn_servers_proton_filter_p2p: draft.vpn_servers_proton_filter_p2p,
+          vpn_servers_proton_filter_secure_core: draft.vpn_servers_proton_filter_secure_core,
+          vpn_servers_proton_filter_tor: draft.vpn_servers_proton_filter_tor,
           wireguard_mtu: Math.max(0, toNumber(draft.wireguard_mtu, DEFAULTS.wireguard_mtu)),
         }
         const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
@@ -439,7 +454,16 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       if (String(apiKey || '').trim()) headers.Authorization = `Bearer ${String(apiKey).trim()}`
       const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh`, {
         method: 'POST', headers,
-        body: JSON.stringify({ source: draft.vpn_servers_refresh_source, gluetun_json_mode: draft.vpn_servers_gluetun_json_mode, reason: 'manual-ui' }),
+        body: JSON.stringify({
+          source: draft.vpn_servers_refresh_source,
+          gluetun_json_mode: draft.vpn_servers_gluetun_json_mode,
+          reason: 'manual-ui',
+          filters: draft.vpn_servers_refresh_source === 'proton_paid' ? {
+            p2p: draft.vpn_servers_proton_filter_p2p,
+            secure_core: draft.vpn_servers_proton_filter_secure_core,
+            tor: draft.vpn_servers_proton_filter_tor,
+          } : null
+        }),
       })
       if (!response.ok) {
         const failure = await response.json().catch(() => ({}))
@@ -590,6 +614,25 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                       </SettingRow>
                     </>
                   )}
+                  {/* Proton Server Filters */}
+                  <div style={{ background: 'var(--bg-2)', padding: '10px 12px', marginTop: 10, border: '1px solid var(--line)' }}>
+                    <div className="label" style={{ fontSize: 10, marginBottom: 8, color: 'var(--fg-2)' }}>CATALOG FILTERS</div>
+                    <SettingRow label="P2P Servers" compact>
+                      <select value={draft.vpn_servers_proton_filter_p2p} onChange={(e) => update('vpn_servers_proton_filter_p2p', e.target.value)} style={selectStyle}>
+                        {PROTON_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </SettingRow>
+                    <SettingRow label="Secure Core" compact>
+                      <select value={draft.vpn_servers_proton_filter_secure_core} onChange={(e) => update('vpn_servers_proton_filter_secure_core', e.target.value)} style={selectStyle}>
+                        {PROTON_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </SettingRow>
+                    <SettingRow label="Tor Servers" compact>
+                      <select value={draft.vpn_servers_proton_filter_tor} onChange={(e) => update('vpn_servers_proton_filter_tor', e.target.value)} style={selectStyle}>
+                        {PROTON_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </SettingRow>
+                  </div>
                 </>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 10 }}>

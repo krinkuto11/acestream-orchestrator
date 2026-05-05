@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -629,13 +631,37 @@ func (s *ProxyServer) mgHandleVPNServersRefresh(w http.ResponseWriter, r *http.R
 		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "servers refresh service not available"})
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	var body struct {
+		Source          string         `json:"source"`
+		GluetunJSONMode string         `json:"gluetun_json_mode"`
+		Filters         map[string]any `json:"filters"`
+	}
+
+	// We read the body to check the source. If it's proton_paid, we'll
+	// proxy the original request to the sidecar.
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read request body"})
+		return
+	}
+	_ = json.Unmarshal(bodyBytes, &body)
+
+	if body.Source == "proton_paid" {
+		// Re-assign body so mgHandleProtonRefresh can read it again.
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		s.mgHandleProtonRefresh(w, r)
+		return
+	}
+
+	// Default: Official Gluetun source.
 	go func() {
-		// Use a background context because this goroutine outlives the HTTP request.
 		if err := s.svcRefresh.RefreshOfficial(context.Background()); err != nil {
 			slog.Warn("VPN servers manual refresh failed", "err", err)
 		}
 	}()
-	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "refresh started"})
+	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "refresh started", "source": "gluetun_official"})
 }
 
 // ─── VPN ─────────────────────────────────────────────────────────────────────
