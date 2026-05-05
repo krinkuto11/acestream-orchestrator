@@ -433,6 +433,125 @@ func (re *ReputationEngine) candidateServers(
 	return candidates
 }
 
+// ── Catalog → DB sync ────────────────────────────────────────────────────────
+
+// sourceForProvider maps a Gluetun servers.json provider key to the DB source value.
+// The DB CHECK constraint only allows "proton" or "gluetun".
+func sourceForProvider(key string) string {
+	if key == "protonvpn" {
+		return "proton"
+	}
+	return "gluetun"
+}
+
+// SyncCatalogToDB imports all servers from servers.json into the vpn_server table
+// so the VPN page has rows to display immediately after a refresh.
+func (re *ReputationEngine) SyncCatalogToDB(ctx context.Context) error {
+	payload, err := re.catalog.loadCatalog("servers.json")
+	if err != nil {
+		return fmt.Errorf("SyncCatalogToDB: load catalog: %w", err)
+	}
+
+	type seenKey struct{ source, id string }
+	seenBySource := make(map[string][]string)
+
+	for provKey, section := range payload {
+		if provKey == "version" {
+			continue
+		}
+		sec, ok := section.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		servers, ok := sec["servers"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		source := sourceForProvider(provKey)
+
+		for _, rawSrv := range servers {
+			srv, ok := rawSrv.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			hn := strings.ToLower(strings.TrimSpace(strVal(srv["hostname"])))
+			if hn == "" {
+				continue
+			}
+
+			id := persistence.ServerID(source, hn)
+
+			var ips []string
+			if rawIPs, ok := srv["ips"].([]interface{}); ok {
+				for _, ip := range rawIPs {
+					if s := strings.TrimSpace(strVal(ip)); s != "" {
+						ips = append(ips, s)
+					}
+				}
+			}
+
+			var loadPct *int
+			if lv, ok := srv["load"].(float64); ok {
+				v := int(lv)
+				loadPct = &v
+			}
+
+			tier := 0
+			if tv, ok := srv["tier"].(float64); ok {
+				tier = int(tv)
+			}
+
+			flags := persistence.VPNServerFlags{
+				PortForward: coerceBool(srv["port_forward"]),
+				SecureCore:  coerceBool(srv["secure_core"]),
+				Tor:         coerceBool(srv["tor"]),
+				Free:        coerceBool(srv["free"]),
+				Stream:      coerceBool(srv["stream"]),
+			}
+
+			cc := strVal(srv["country_code"])
+			if cc == "" {
+				cc = strVal(srv["countrycode"])
+			}
+
+			row := persistence.VPNServerRow{
+				ID:          id,
+				Source:      source,
+				Hostname:    hn,
+				IPs:         ips,
+				Country:     strVal(srv["country"]),
+				CountryCode: strings.ToUpper(cc),
+				City:        strVal(srv["city"]),
+				ServerName:  strVal(srv["server_name"]),
+				Tier:        tier,
+				Flags:       flags,
+				LoadPct:     loadPct,
+				Status:      "unknown",
+			}
+
+			if err := persistence.UpsertVPNServer(ctx, re.db, row); err != nil {
+				slog.Warn("SyncCatalogToDB: upsert failed", "id", id, "err", err)
+				continue
+			}
+			seenBySource[source] = append(seenBySource[source], id)
+		}
+	}
+
+	for source, ids := range seenBySource {
+		if err := persistence.MarkServersDown(ctx, re.db, source, ids); err != nil {
+			slog.Warn("SyncCatalogToDB: mark down failed", "source", source, "err", err)
+		}
+	}
+
+	totals := make([]string, 0, len(seenBySource))
+	for src, ids := range seenBySource {
+		totals = append(totals, fmt.Sprintf("%s=%d", src, len(ids)))
+	}
+	slog.Info("SyncCatalogToDB: catalog imported into DB", "by_source", strings.Join(totals, " "))
+	return nil
+}
+
 // ── Jitter selection ─────────────────────────────────────────────────────────
 
 // pickWithJitter selects from the top candidates with small score jitter to avoid herding.

@@ -183,6 +183,18 @@ func (s *ServersRefreshService) RefreshOfficial(ctx context.Context) error {
 		"merged_file", mergedPath,
 	)
 
+	// Import catalog into DB so the VPN page has rows immediately.
+	if s.rep != nil {
+		// Invalidate the in-memory catalog cache so the updated file is re-read.
+		s.rep.catalog.mu.Lock()
+		delete(s.rep.catalog.catalogs, s.rep.catalog.serversJSONPath("servers.json"))
+		s.rep.catalog.mu.Unlock()
+
+		if err := s.rep.SyncCatalogToDB(ctx); err != nil {
+			slog.Warn("SyncCatalogToDB failed after refresh", "err", err)
+		}
+	}
+
 	// Sync into the shared Docker volume.
 	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
