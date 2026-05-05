@@ -397,6 +397,7 @@ func (s *stateSink) OnStreamProbe(contentID, engineID string, startedAt time.Tim
 	}
 	if db := s.rep.DB(); db != nil {
 		if _, err := persistence.InsertProbe(context.Background(), db, probe); err == nil {
+			// Emit probe completed event for UI updates.
 			api.PublishVPNEvent("vpn.probe.completed", map[string]any{
 				"server_id":   serverID,
 				"content_id":  contentID,
@@ -404,6 +405,27 @@ func (s *stateSink) OnStreamProbe(contentID, engineID string, startedAt time.Tim
 				"reason":      reason,
 				"duration_ms": durationMs,
 			})
+			// Immediately recompute reputation for this server & category so the
+			// frontend can show non-null TTFB/duration/probes without waiting for
+			// the periodic background refresh job. This is acceptable because
+			// probe writes are infrequent and the recompute is scoped to one
+			// server/category.
+			repCfg := persistence.ReputationConfig{
+				WSuccess:      config.C.Load().ReputationWSuccess,
+				WTtfb:         config.C.Load().ReputationWTtfb,
+				WDuration:     config.C.Load().ReputationWDuration,
+				LowConfProbes: config.C.Load().ReputationLowConfProbes,
+			}
+			if rep, err := persistence.RefreshReputation(context.Background(), db, serverID, "_overall", repCfg); err == nil {
+				// Publish a refreshed event with the computed score so SSE listeners
+				// can update the UI immediately with TTFB/duration/probe metrics.
+				payload := map[string]any{"server_id": serverID}
+				if rep != nil {
+					payload["score"] = rep.Score
+					payload["score_color"] = rep.ScoreColor
+				}
+				api.PublishVPNEvent("vpn.reputation.refreshed", payload)
+			}
 		}
 	}
 }
