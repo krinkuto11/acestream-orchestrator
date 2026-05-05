@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,10 +80,24 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 	credSupportsPF := credentialSupportsPF(cred)
 	pfSupported := providerSupportsPF && credSupportsPF
 
+	// AirVPN uses FIREWALL_VPN_INPUT_PORTS instead of VPN_PORT_FORWARDING=on.
+	// Check separately so the effective PF flag is accurate for state/labels.
+	airVPNPF := provider == "airvpn" && credSupportsPF && len(parseFirewallPorts(cred["firewall_vpn_input_ports"])) > 0
+	effectivePF := pfSupported || airVPNPF
+
 	env, err := buildGluetunEnv(provider, protocol, regions, cred, map[string]interface{}{}, pfSupported, true)
 	if err != nil {
 		p.creds.ReleaseLease(containerName)
 		return nil, fmt.Errorf("building env: %w", err)
+	}
+
+	// Assign a pre-allocated AirVPN port from the unified pool.
+	if airVPNPF {
+		if port := p.creds.AcquireAirVPNPort(containerName); port > 0 {
+			env["FIREWALL_VPN_INPUT_PORTS"] = strconv.Itoa(port)
+		} else {
+			slog.Warn("AirVPN port pool exhausted; container will have no forwarded port", "name", containerName)
+		}
 	}
 
 	// Choose a safe hostname from the catalog unless the credential already pins one.
@@ -116,7 +131,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 		}
 	}
 
-	labels := buildLabels(provider, protocol, lease.CredentialID, pfSupported)
+	labels := buildLabels(provider, protocol, lease.CredentialID, effectivePF)
 	image := cfg.VPNImage
 	if image == "" {
 		image = "qmcgaw/gluetun"
@@ -125,6 +140,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 	containerID, controlHost, err := p.startContainer(ctx, image, containerName, env, labels)
 	if err != nil {
 		p.creds.ReleaseLease(containerName)
+		p.creds.ReleaseAirVPNPort(containerName)
 		return nil, fmt.Errorf("starting container: %w", err)
 	}
 
@@ -139,7 +155,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 		CredentialID:            lease.CredentialID,
 		ManagedDynamic:          true,
 		AssignedHostname:        assignedHostname,
-		PortForwardingSupported: pfSupported,
+		PortForwardingSupported: effectivePF,
 		ControlHost:             controlHost,
 		FirstSeen:               now,
 		LastSeen:                now,
@@ -159,7 +175,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 		Protocol:                protocol,
 		CredentialID:            lease.CredentialID,
 		AssignedHostname:        assignedHostname,
-		PortForwardingSupported: pfSupported,
+		PortForwardingSupported: effectivePF,
 		ControlServerURL:        fmt.Sprintf("http://%s:%d", containerName, cfg.GluetunAPIPort),
 	}, nil
 }
@@ -190,6 +206,7 @@ func (p *Provisioner) DestroyNode(ctx context.Context, containerName string) err
 		}
 	}
 
+	p.creds.ReleaseAirVPNPort(containerName)
 	p.creds.ReleaseLease(containerName)
 	state.Global.RemoveVPNNode(containerName)
 	return nil

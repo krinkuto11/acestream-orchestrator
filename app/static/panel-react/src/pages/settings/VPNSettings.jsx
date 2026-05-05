@@ -3,11 +3,28 @@ import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
 
 const PROVIDER_OPTIONS = [
-  { value: 'protonvpn', label: 'ProtonVPN' },
+  { value: 'airvpn', label: 'AirVPN' },
+  { value: 'cyberghost', label: 'CyberGhost' },
+  { value: 'expressvpn', label: 'ExpressVPN' },
+  { value: 'fastestvpn', label: 'FastestVPN' },
+  { value: 'giganews', label: 'Giganews' },
+  { value: 'hidemyass', label: 'HideMyAss' },
+  { value: 'ipvanish', label: 'IPVanish' },
+  { value: 'ivpn', label: 'IVPN' },
+  { value: 'mullvad', label: 'Mullvad' },
+  { value: 'nordvpn', label: 'NordVPN' },
+  { value: 'perfect privacy', label: 'Perfect Privacy' },
+  { value: 'privado', label: 'Privado' },
   { value: 'private internet access', label: 'Private Internet Access (PIA)' },
   { value: 'privatevpn', label: 'PrivateVPN' },
-  { value: 'perfect privacy', label: 'Perfect Privacy' },
-  { value: 'mullvad', label: 'Mullvad' },
+  { value: 'protonvpn', label: 'ProtonVPN' },
+  { value: 'purevpn', label: 'PureVPN' },
+  { value: 'slickvpn', label: 'SlickVPN' },
+  { value: 'surfshark', label: 'Surfshark' },
+  { value: 'torguard', label: 'Torguard' },
+  { value: 'vpnsecure', label: 'VPN Secure' },
+  { value: 'vpn unlimited', label: 'VPN Unlimited' },
+  { value: 'vyprvpn', label: 'VyprVPN' },
   { value: 'windscribe', label: 'Windscribe' },
   { value: 'custom', label: 'Custom Provider' },
 ]
@@ -165,6 +182,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [credentialMode, setCredentialMode] = useState('wireguard')
   const [credentialRegions, setCredentialRegions] = useState('')
   const [credentialPortForwarding, setCredentialPortForwarding] = useState(true)
+  const [credentialAirVPNPorts, setCredentialAirVPNPorts] = useState('')
   const [wgText, setWgText] = useState('')
   const [openvpnUser, setOpenvpnUser] = useState('')
   const [openvpnPassword, setOpenvpnPassword] = useState('')
@@ -175,7 +193,10 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   }, [draft, initialState, credentials, initialCredentials])
 
   const sheetProviderNormalized = useMemo(() => normalizeProvider(credentialProvider), [credentialProvider])
-  const sheetProviderSupportsForwarding = useMemo(() => isForwardingSupported(sheetProviderNormalized), [sheetProviderNormalized])
+  const sheetProviderSupportsForwarding = useMemo(() => {
+    if (sheetProviderNormalized === 'airvpn') return credentialAirVPNPorts.trim() !== ''
+    return isForwardingSupported(sheetProviderNormalized)
+  }, [sheetProviderNormalized, credentialAirVPNPorts])
   const hasCredentials = credentials.length > 0
   const refreshSourceOptions = VPN_SERVER_REFRESH_SOURCE_OPTIONS
   const vpnToggleDisabled = !hasCredentials && !draft.enabled
@@ -394,11 +415,16 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setError('')
     setMessage('')
     try {
+      const airVPNPorts = sheetProviderNormalized === 'airvpn'
+        ? credentialAirVPNPorts.split(',').map((p) => parseInt(p.trim(), 10)).filter((n) => n > 0 && n <= 65535)
+        : []
+
       let payload = {
         provider: sheetProviderNormalized,
         protocol: credentialMode,
         regions: parseRegionsInput(credentialRegions),
         port_forwarding: Boolean(credentialPortForwarding && sheetProviderSupportsForwarding),
+        ...(airVPNPorts.length > 0 ? { firewall_vpn_input_ports: airVPNPorts } : {}),
       }
       if (credentialMode === 'wireguard') {
         const confText = String(wgText || '').trim()
@@ -429,6 +455,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       setOpenvpnUser('')
       setOpenvpnPassword('')
       setCredentialRegions('')
+      setCredentialAirVPNPorts('')
     } catch (addError) {
       setError(`Failed to add credential: ${addError.message || String(addError)}`)
     } finally {
@@ -701,7 +728,11 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             ) : credentials.map((credential) => {
               const protocol = String(credential?.protocol || 'wireguard').toLowerCase()
               const provider = normalizeProvider(credential?.provider || 'Unknown')
-              const hasForwarding = Boolean(credential?.port_forwarding) && isForwardingSupported(provider)
+              const airVPNPortList = provider === 'airvpn' && Array.isArray(credential?.firewall_vpn_input_ports)
+                ? credential.firewall_vpn_input_ports : []
+              const hasForwarding = Boolean(credential?.port_forwarding) && (
+                isForwardingSupported(provider) || (provider === 'airvpn' && airVPNPortList.length > 0)
+              )
               const credentialId = String(credential?.id || '').trim()
               const lease = credentialId ? leasesByCredentialId.get(credentialId) : null
               const inUse = Boolean(lease)
@@ -731,7 +762,14 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                   </td>
                   <td>
                     {hasForwarding
-                      ? <span className="tag tag-cyan" style={{ fontSize: 9 }}>⚡ ENABLED</span>
+                      ? <div>
+                          <span className="tag tag-cyan" style={{ fontSize: 9 }}>⚡ ENABLED</span>
+                          {airVPNPortList.length > 0 && (
+                            <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 2 }}>
+                              {airVPNPortList.join(', ')}
+                            </div>
+                          )}
+                        </div>
                       : <span className="tag" style={{ fontSize: 9 }}>DISABLED</span>
                     }
                   </td>
@@ -793,7 +831,27 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
               <SettingRow label="Preferred Regions" description="Comma-separated preferred regions (e.g. us-east, nl).">
                 <input value={credentialRegions} onChange={(e) => setCredentialRegions(e.target.value)} placeholder="us-east, nl, region:paris" style={{ ...inputStyle, width: '100%' }}/>
               </SettingRow>
-              <SettingRow label="Port Forwarding" description="Enable only if credential/provider supports forwarded ports.">
+              {sheetProviderNormalized === 'airvpn' && (
+                <SettingRow
+                  label="Pre-allocated Ports"
+                  description="Comma-separated ports from airvpn.org/ports. Each container claims one from the shared pool."
+                >
+                  <input
+                    value={credentialAirVPNPorts}
+                    onChange={(e) => setCredentialAirVPNPorts(e.target.value)}
+                    placeholder="e.g. 12345, 54321"
+                    style={{ ...inputStyle, width: '100%' }}
+                  />
+                </SettingRow>
+              )}
+              <SettingRow
+                label="Port Forwarding"
+                description={
+                  sheetProviderNormalized === 'airvpn'
+                    ? 'Enable to assign a pre-allocated port from the pool to each container.'
+                    : 'Enable only if credential/provider supports forwarded ports.'
+                }
+              >
                 <Toggle checked={credentialPortForwarding && sheetProviderSupportsForwarding} disabled={!sheetProviderSupportsForwarding} onChange={setCredentialPortForwarding}/>
               </SettingRow>
 

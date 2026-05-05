@@ -21,18 +21,20 @@ type Lease struct {
 // Credentials are loaded from a JSON file; leases are tracked in-memory and
 // restored from Docker container labels on startup.
 type CredentialManager struct {
-	mu         sync.Mutex
-	byID       map[string]map[string]interface{} // credentialID -> raw credential
-	available  []string                          // FIFO queue of available IDs
-	leases     map[string]string                 // containerID -> credentialID
-	leaseTimes map[string]time.Time
+	mu           sync.Mutex
+	byID         map[string]map[string]interface{} // credentialID -> raw credential
+	available    []string                          // FIFO queue of available IDs
+	leases       map[string]string                 // containerID -> credentialID
+	leaseTimes   map[string]time.Time
+	airVPNPorts  *AirVPNPortPool
 }
 
 func NewCredentialManager() *CredentialManager {
 	return &CredentialManager{
-		byID:       make(map[string]map[string]interface{}),
-		leases:     make(map[string]string),
-		leaseTimes: make(map[string]time.Time),
+		byID:        make(map[string]map[string]interface{}),
+		leases:      make(map[string]string),
+		leaseTimes:  make(map[string]time.Time),
+		airVPNPorts: newAirVPNPortPool(),
 	}
 }
 
@@ -97,7 +99,32 @@ func (cm *CredentialManager) Configure(credentials []map[string]interface{}) err
 
 	cm.byID = newByID
 	cm.available = available
+
+	// Snapshot credentials for the port pool rebuild. The pool has its own
+	// mutex so calling rebuild while holding cm.mu is safe (no shared lock path).
+	credsCopy := make([]map[string]interface{}, 0, len(newByID))
+	for _, c := range newByID {
+		credsCopy = append(credsCopy, c)
+	}
+	cm.airVPNPorts.rebuild(credsCopy)
+
 	return nil
+}
+
+// AcquireAirVPNPort claims a pre-allocated FIREWALL_VPN_INPUT_PORTS port for
+// containerName from the unified AirVPN port pool. Returns 0 if exhausted.
+func (cm *CredentialManager) AcquireAirVPNPort(containerName string) int {
+	return cm.airVPNPorts.acquirePort(containerName)
+}
+
+// ReleaseAirVPNPort returns the port held by containerName to the pool.
+func (cm *CredentialManager) ReleaseAirVPNPort(containerName string) {
+	cm.airVPNPorts.releasePort(containerName)
+}
+
+// AirVPNPortSummary returns pool statistics for the AirVPN port pool.
+func (cm *CredentialManager) AirVPNPortSummary() map[string]interface{} {
+	return cm.airVPNPorts.summary()
 }
 
 // AcquireLease atomically reserves one credential for containerID.
@@ -231,10 +258,11 @@ func (cm *CredentialManager) Summary() map[string]interface{} {
 		})
 	}
 	return map[string]interface{}{
-		"total":     len(cm.byID),
-		"available": len(cm.available),
-		"leased":    len(cm.leases),
-		"leases":    leases,
+		"total":        len(cm.byID),
+		"available":    len(cm.available),
+		"leased":       len(cm.leases),
+		"leases":       leases,
+		"airvpn_ports": cm.airVPNPorts.summary(),
 	}
 }
 
