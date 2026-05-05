@@ -315,17 +315,22 @@ func (s *stateSink) OnStreamPrebuffering(contentID, engineID, engineName, stream
 	s.st.OnStreamPrebuffering(contentID, engineID, engineName, streamMode, controlMode)
 }
 
-func (s *stateSink) OnStreamProbe(contentID, outcome, reason string) {
+func (s *stateSink) OnStreamProbe(contentID, engineID string, startedAt time.Time, controlMode, streamMode, outcome, reason string) {
 	if s.rep == nil {
 		return
 	}
-	st, ok := s.st.GetStream(contentID)
-	if !ok {
-		return
-	}
-	engineID := st.EngineID
 	if engineID == "" {
-		engineID = st.ContainerID
+		if st, ok := s.st.GetStream(contentID); ok {
+			engineID = st.EngineID
+			if engineID == "" {
+				engineID = st.ContainerID
+			}
+			if startedAt.IsZero() {
+				startedAt = st.StartedAt
+				controlMode = st.ControlMode
+				streamMode = st.StreamMode
+			}
+		}
 	}
 	if engineID == "" {
 		return
@@ -344,7 +349,6 @@ func (s *stateSink) OnStreamProbe(contentID, outcome, reason string) {
 		return
 	}
 
-	startedAt := st.StartedAt
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
@@ -367,15 +371,15 @@ func (s *stateSink) OnStreamProbe(contentID, outcome, reason string) {
 
 	meta := map[string]any{
 		"reason":        reason,
-		"stream_mode":   st.StreamMode,
-		"control_mode":  st.ControlMode,
+		"stream_mode":   streamMode,
+		"control_mode":  controlMode,
 		"engine_id":     engineID,
 		"vpn_container": eng.VPNContainer,
 		"vpn_host":      node.AssignedHostname,
 		"vpn_provider":  node.Provider,
 	}
-	if st.ContainerName != "" {
-		meta["engine_name"] = st.ContainerName
+	if eng.ContainerName != "" {
+		meta["engine_name"] = eng.ContainerName
 	}
 
 	probe := persistence.VPNProbeRow{

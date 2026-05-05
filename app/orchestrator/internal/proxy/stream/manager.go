@@ -27,7 +27,7 @@ const apiKeepaliveInterval = 2 * time.Second
 type EventSink interface {
 	OnStreamStarted(contentID, engineID, controlMode, streamMode string)
 	OnStreamPrebuffering(contentID, engineID, engineName, streamMode, controlMode string)
-	OnStreamProbe(contentID, outcome, reason string)
+	OnStreamProbe(contentID, engineID string, startedAt time.Time, controlMode, streamMode, outcome, reason string)
 	OnStreamEnded(contentID string)
 	// OnStreamFailed is called when a stream request fails before OnStreamStarted
 	// fires, so the engine's pending reservation can be released.
@@ -36,11 +36,11 @@ type EventSink interface {
 
 type noopSink struct{}
 
-func (noopSink) OnStreamStarted(_, _, _, _ string)         {}
-func (noopSink) OnStreamPrebuffering(_, _, _, _, _ string) {}
-func (noopSink) OnStreamProbe(_, _, _ string)              {}
-func (noopSink) OnStreamEnded(_ string)                    {}
-func (noopSink) OnStreamFailed(_ string)                   {}
+func (noopSink) OnStreamStarted(_, _, _, _ string)                         {}
+func (noopSink) OnStreamPrebuffering(_, _, _, _, _ string)                 {}
+func (noopSink) OnStreamProbe(_, _ string, _ time.Time, _, _, _, _ string) {}
+func (noopSink) OnStreamEnded(_ string)                                    {}
+func (noopSink) OnStreamFailed(_ string)                                   {}
 
 // EngineParams describes an AceStream engine to connect to.
 type EngineParams struct {
@@ -117,6 +117,7 @@ func (m *Manager) Run(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancelFn = cancel
 	defer cancel()
+	startedAt := time.Now().UTC()
 
 	go m.statsPusher(ctx)
 
@@ -138,7 +139,7 @@ func (m *Manager) Run(ctx context.Context) {
 		m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID, m.params.ControlMode, m.params.StreamMode)
 		go m.measureBitrate(ctx)
 		outcome, reason := m.startReadLoop(ctx)
-		m.sink.OnStreamProbe(m.params.ContentID, outcome, reason)
+		m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason)
 		m.sink.OnStreamEnded(m.params.ContentID)
 		m.sendEngineStop()
 		return
@@ -147,7 +148,7 @@ func (m *Manager) Run(ctx context.Context) {
 	if err := m.requestStream(ctx); err != nil {
 		slog.Error("stream request failed", "stream", m.params.ContentID, "err", err)
 		outcome, reason := classifyProbeOutcome(err)
-		m.sink.OnStreamProbe(m.params.ContentID, outcome, reason)
+		m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason)
 		m.sink.OnStreamFailed(m.params.Engine.ContainerID)
 		m.sink.OnStreamEnded(m.params.ContentID)
 		return
@@ -156,7 +157,7 @@ func (m *Manager) Run(ctx context.Context) {
 	m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID, m.params.ControlMode, m.params.StreamMode)
 	go m.measureBitrate(ctx)
 	outcome, reason := m.startReadLoop(ctx)
-	m.sink.OnStreamProbe(m.params.ContentID, outcome, reason)
+	m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason)
 	m.sink.OnStreamEnded(m.params.ContentID)
 	m.sendEngineStop()
 }
