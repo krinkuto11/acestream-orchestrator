@@ -708,7 +708,18 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         actions={
           <button
             type="button"
-            onClick={() => setDialogOpen(true)}
+            onClick={() => {
+              setEditingCredentialId(null)
+              setCredentialProvider('protonvpn')
+              setCredentialMode('wireguard')
+              setCredentialRegions('')
+              setCredentialPortForwarding(true)
+              setCredentialAirVPNPorts('')
+              setWgText('')
+              setOpenvpnUser('')
+              setOpenvpnPassword('')
+              setDialogOpen(true)
+            }}
             className="tag tag-green"
             style={{ cursor: 'pointer', padding: '4px 10px', fontSize: 10 }}
           >
@@ -794,8 +805,8 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                         // Open dialog pre-filled for editing
                         const cred = credential || {}
                         setEditingCredentialId(String(cred.id || ''))
-                        setCredentialProvider(cred.provider || 'protonvpn')
-                        setCredentialMode((cred.protocol || 'wireguard'))
+                        setCredentialProvider(normalizeProvider(cred.provider || 'protonvpn'))
+                        setCredentialMode(String((cred.protocol || 'wireguard')).toLowerCase())
                         setCredentialRegions(Array.isArray(cred.regions) ? cred.regions.join(', ') : (cred.regions || ''))
                         setCredentialPortForwarding(Boolean(cred.port_forwarding))
                         setCredentialAirVPNPorts(Array.isArray(cred.firewall_vpn_input_ports) ? cred.firewall_vpn_input_ports.join(',') : (cred.firewall_vpn_input_ports || ''))
