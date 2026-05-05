@@ -177,10 +177,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const sheetProviderNormalized = useMemo(() => normalizeProvider(credentialProvider), [credentialProvider])
   const sheetProviderSupportsForwarding = useMemo(() => isForwardingSupported(sheetProviderNormalized), [sheetProviderNormalized])
   const hasCredentials = credentials.length > 0
-  const hasProtonCredentials = useMemo(
-    () => credentials.some((credential) => normalizeProvider(credential?.provider) === 'protonvpn'),
-    [credentials],
-  )
   const refreshSourceOptions = VPN_SERVER_REFRESH_SOURCE_OPTIONS
   const vpnToggleDisabled = !hasCredentials && !draft.enabled
 
@@ -458,7 +454,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setError('')
     setMessage('')
     try {
-      const refreshSource = hasProtonCredentials ? draft.vpn_servers_refresh_source : 'gluetun_official'
+      const refreshSource = String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source)
       const headers = { 'Content-Type': 'application/json' }
       if (String(apiKey || '').trim()) headers.Authorization = `Bearer ${String(apiKey).trim()}`
       const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh`, {
@@ -583,7 +579,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                   <input value={draft.vpn_servers_official_url} style={{ ...inputStyle, width: 280 }} onChange={(e) => update('vpn_servers_official_url', e.target.value)}/>
                 </SettingRow>
               )}
-              {hasProtonCredentials && draft.vpn_servers_refresh_source === 'proton_paid' && (
+              {draft.vpn_servers_refresh_source === 'proton_paid' && (
                 <>
                   <SettingRow label="Proton Credentials Source" description="Use environment variables or persisted settings values.">
                     <select value={draft.vpn_servers_proton_credentials_source} onChange={(e) => update('vpn_servers_proton_credentials_source', e.target.value)} style={selectStyle}>

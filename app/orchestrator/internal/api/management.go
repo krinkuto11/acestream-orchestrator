@@ -634,7 +634,59 @@ func (s *ProxyServer) mgHandleVPNCredentials(w http.ResponseWriter, r *http.Requ
 		mgWriteJSON(w, http.StatusOK, map[string]any{"total": 0, "available": 0, "leased": 0})
 		return
 	}
-	mgWriteJSON(w, http.StatusOK, s.creds.Summary())
+	summary := s.creds.Summary()
+
+	// If the in-memory lease map is stale (for example after restart/reconcile
+	// races), rebuild lease observability from live VPN node state so the UI
+	// reflects real leases.
+	toInt := func(v any) int {
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		default:
+			return 0
+		}
+	}
+	currentLeased := toInt(summary["leased"])
+	if currentLeased == 0 {
+		nodes := s.st.ListVPNNodes()
+		derivedByCred := make(map[string]map[string]any)
+		for _, n := range nodes {
+			credID := strings.TrimSpace(n.CredentialID)
+			if credID == "" {
+				continue
+			}
+			entry := map[string]any{
+				"container_id":  n.ContainerName,
+				"credential_id": credID,
+			}
+			if !n.FirstSeen.IsZero() {
+				entry["leased_at"] = n.FirstSeen
+			}
+			derivedByCred[credID] = entry
+		}
+		if len(derivedByCred) > 0 {
+			derivedLeases := make([]map[string]any, 0, len(derivedByCred))
+			for _, l := range derivedByCred {
+				derivedLeases = append(derivedLeases, l)
+			}
+			total := toInt(summary["total"])
+			leased := len(derivedLeases)
+			available := total - leased
+			if available < 0 {
+				available = 0
+			}
+			summary["leased"] = leased
+			summary["available"] = available
+			summary["leases"] = derivedLeases
+		}
+	}
+
+	mgWriteJSON(w, http.StatusOK, summary)
 }
 
 func (s *ProxyServer) mgHandleVPNServersRefresh(w http.ResponseWriter, r *http.Request) {
