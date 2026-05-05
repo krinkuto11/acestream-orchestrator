@@ -622,6 +622,14 @@ func normalizeEngineSettings(m map[string]any) map[string]any {
 func normalizeVPNSettings(m map[string]any) map[string]any {
 	out := deepCopyMap(m)
 
+	// Backward-compat alias: accept refresh_source and map it to
+	// vpn_servers_refresh_source.
+	if _, hasCanonical := out["vpn_servers_refresh_source"]; !hasCanonical {
+		if v, ok := out["refresh_source"]; ok {
+			out["vpn_servers_refresh_source"] = v
+		}
+	}
+
 	// Legacy key migrations
 	if _, ok := out["providers"]; ok {
 		delete(out, "providers")
@@ -629,6 +637,7 @@ func normalizeVPNSettings(m map[string]any) map[string]any {
 	for _, stale := range []string{"vpn_mode", "container_name", "vpn_container_name"} {
 		delete(out, stale)
 	}
+	delete(out, "refresh_source")
 
 	// Boolean fields
 	for _, k := range []string{

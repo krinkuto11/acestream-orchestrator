@@ -181,10 +181,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     () => credentials.some((credential) => normalizeProvider(credential?.provider) === 'protonvpn'),
     [credentials],
   )
-  const refreshSourceOptions = useMemo(
-    () => (hasProtonCredentials ? VPN_SERVER_REFRESH_SOURCE_OPTIONS : VPN_SERVER_REFRESH_SOURCE_OPTIONS.filter((o) => o.value !== 'proton_paid')),
-    [hasProtonCredentials],
-  )
+  const refreshSourceOptions = VPN_SERVER_REFRESH_SOURCE_OPTIONS
   const vpnToggleDisabled = !hasCredentials && !draft.enabled
 
   const leasesByCredentialId = useMemo(() => {
@@ -263,9 +260,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         vpn_servers_proton_filter_tor: String(payload?.vpn_servers_proton_filter_tor || 'include'),
         wireguard_mtu: toNumber(payload?.wireguard_mtu, DEFAULTS.wireguard_mtu),
       }
-      if (!hasProtonCredentials && normalized.vpn_servers_refresh_source === 'proton_paid') {
-        normalized.vpn_servers_refresh_source = 'gluetun_official'
-      }
       setInitialState(normalized)
       setDraft(normalized)
       const loadedCredentials = Array.isArray(payload?.credentials) ? payload.credentials : []
@@ -310,9 +304,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           trigger_migration: Boolean(draft.enabled) !== Boolean(initialState.enabled),
           vpn_servers_auto_refresh: Boolean(draft.vpn_servers_auto_refresh),
           vpn_servers_refresh_period_s: Math.max(60, toNumber(draft.vpn_servers_refresh_period_s, DEFAULTS.vpn_servers_refresh_period_s)),
-          vpn_servers_refresh_source: hasProtonCredentials
-            ? String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source)
-            : 'gluetun_official',
+          vpn_servers_refresh_source: String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source),
           vpn_servers_gluetun_json_mode: String(draft.vpn_servers_gluetun_json_mode || DEFAULTS.vpn_servers_gluetun_json_mode),
           vpn_servers_storage_path: String(draft.vpn_servers_storage_path || '').trim() || null,
           vpn_servers_official_url: String(draft.vpn_servers_official_url || DEFAULTS.vpn_servers_official_url).trim(),
@@ -451,10 +443,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const removeCredential = (credentialId) => {
     setCredentials((prev) => {
       const nextCredentials = prev.filter((c) => String(c?.id || '') !== String(credentialId || ''))
-      const stillHasProton = nextCredentials.some((credential) => normalizeProvider(credential?.provider) === 'protonvpn')
-      if (!stillHasProton && draft.vpn_servers_refresh_source === 'proton_paid') {
-        setDraft((current) => ({ ...current, vpn_servers_refresh_source: 'gluetun_official' }))
-      }
       return nextCredentials
     })
     setError('')
