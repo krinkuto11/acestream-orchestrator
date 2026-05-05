@@ -208,7 +208,7 @@ func main() {
 	go eventWatcher.Run(appCtx)
 
 	// ── Proxy plane ────────────────────────────────────────────────────────────
-	sink := &stateSink{st: st}
+	sink := &stateSink{st: st, rep: repEngine}
 	hub := proxystream.NewHub(rdb, sink)
 	monSvc := proxymonitor.New(rdb, st, settingsStore)
 
@@ -287,7 +287,8 @@ func main() {
 
 // stateSink wires proxy stream lifecycle events directly into the unified state store.
 type stateSink struct {
-	st *state.Store
+	st  *state.Store
+	rep *vpnpkg.ReputationEngine
 }
 
 func (s *stateSink) OnStreamStarted(contentID, engineID, controlMode, streamMode string) {
@@ -314,6 +315,95 @@ func (s *stateSink) OnStreamPrebuffering(contentID, engineID, engineName, stream
 	s.st.OnStreamPrebuffering(contentID, engineID, engineName, streamMode, controlMode)
 }
 
+func (s *stateSink) OnStreamProbe(contentID, outcome, reason string) {
+	if s.rep == nil {
+		return
+	}
+	st, ok := s.st.GetStream(contentID)
+	if !ok {
+		return
+	}
+	engineID := st.EngineID
+	if engineID == "" {
+		engineID = st.ContainerID
+	}
+	if engineID == "" {
+		return
+	}
+	eng, ok := s.st.GetEngine(engineID)
+	if !ok || eng.VPNContainer == "" {
+		return
+	}
+	node, ok := s.st.GetVPNNode(eng.VPNContainer)
+	if !ok || node.AssignedHostname == "" {
+		return
+	}
+	serverSource := normalizeVPNServerSource(node.Provider)
+	serverID, err := s.rep.ResolveServerID(context.Background(), serverSource, node.AssignedHostname)
+	if err != nil || serverID == "" {
+		return
+	}
+
+	startedAt := st.StartedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	durationMs := int(time.Since(startedAt).Milliseconds())
+	if durationMs < 0 {
+		durationMs = 0
+	}
+
+	var peersMax *int
+	var bytesDown int64
+	if stats := s.st.GetStats(contentID); len(stats) > 0 {
+		latest := stats[len(stats)-1]
+		if latest.Peers != nil {
+			peersMax = latest.Peers
+		}
+		if latest.Downloaded != nil {
+			bytesDown = int64(*latest.Downloaded)
+		}
+	}
+
+	meta := map[string]any{
+		"reason":        reason,
+		"stream_mode":   st.StreamMode,
+		"control_mode":  st.ControlMode,
+		"engine_id":     engineID,
+		"vpn_container": eng.VPNContainer,
+		"vpn_host":      node.AssignedHostname,
+		"vpn_provider":  node.Provider,
+	}
+	if st.ContainerName != "" {
+		meta["engine_name"] = st.ContainerName
+	}
+
+	probe := persistence.VPNProbeRow{
+		ServerID:   serverID,
+		ContentID:  contentID,
+		Category:   "stream",
+		StartedAt:  startedAt,
+		Outcome:    outcome,
+		DurationMs: &durationMs,
+		PeersMax:   peersMax,
+		BytesDown:  bytesDown,
+		EngineID:   engineID,
+		LeaseID:    node.CredentialID,
+		Meta:       meta,
+	}
+	if db := s.rep.DB(); db != nil {
+		if _, err := persistence.InsertProbe(context.Background(), db, probe); err == nil {
+			api.PublishVPNEvent("vpn.probe.completed", map[string]any{
+				"server_id":   serverID,
+				"content_id":  contentID,
+				"outcome":     outcome,
+				"reason":      reason,
+				"duration_ms": durationMs,
+			})
+		}
+	}
+}
+
 func (s *stateSink) OnStreamEnded(contentID string) {
 	s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: contentID})
 	state.RecordEvent(state.EventEntry{
@@ -326,6 +416,15 @@ func (s *stateSink) OnStreamEnded(contentID string) {
 
 func (s *stateSink) OnStreamFailed(engineID string) {
 	s.st.ReleaseEnginePending(engineID)
+}
+
+func normalizeVPNServerSource(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "protonvpn", "proton":
+		return "proton"
+	default:
+		return "gluetun"
+	}
 }
 
 func setupLogger() {

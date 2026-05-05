@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/proxy/aceapi"
 	"github.com/acestream/acestream/internal/proxy/buffer"
-	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/proxy/upstream"
 	"github.com/acestream/acestream/internal/rediskeys"
 	"github.com/acestream/acestream/internal/state"
-	"github.com/acestream/acestream/internal/proxy/upstream"
 )
 
 const apiKeepaliveInterval = 2 * time.Second
@@ -27,6 +27,7 @@ const apiKeepaliveInterval = 2 * time.Second
 type EventSink interface {
 	OnStreamStarted(contentID, engineID, controlMode, streamMode string)
 	OnStreamPrebuffering(contentID, engineID, engineName, streamMode, controlMode string)
+	OnStreamProbe(contentID, outcome, reason string)
 	OnStreamEnded(contentID string)
 	// OnStreamFailed is called when a stream request fails before OnStreamStarted
 	// fires, so the engine's pending reservation can be released.
@@ -35,15 +36,16 @@ type EventSink interface {
 
 type noopSink struct{}
 
-func (noopSink) OnStreamStarted(_, _, _, _ string)          {}
+func (noopSink) OnStreamStarted(_, _, _, _ string)         {}
 func (noopSink) OnStreamPrebuffering(_, _, _, _, _ string) {}
-func (noopSink) OnStreamEnded(_ string)                     {}
-func (noopSink) OnStreamFailed(_ string)            {}
+func (noopSink) OnStreamProbe(_, _, _ string)              {}
+func (noopSink) OnStreamEnded(_ string)                    {}
+func (noopSink) OnStreamFailed(_ string)                   {}
 
 // EngineParams describes an AceStream engine to connect to.
 type EngineParams struct {
-	Host        string
-	Port        int
+	Host          string
+	Port          int
 	APIPort       int
 	ContainerID   string
 	ContainerName string
@@ -135,7 +137,8 @@ func (m *Manager) Run(ctx context.Context) {
 		m.mu.Unlock()
 		m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID, m.params.ControlMode, m.params.StreamMode)
 		go m.measureBitrate(ctx)
-		m.startReadLoop(ctx)
+		outcome, reason := m.startReadLoop(ctx)
+		m.sink.OnStreamProbe(m.params.ContentID, outcome, reason)
 		m.sink.OnStreamEnded(m.params.ContentID)
 		m.sendEngineStop()
 		return
@@ -143,6 +146,8 @@ func (m *Manager) Run(ctx context.Context) {
 
 	if err := m.requestStream(ctx); err != nil {
 		slog.Error("stream request failed", "stream", m.params.ContentID, "err", err)
+		outcome, reason := classifyProbeOutcome(err)
+		m.sink.OnStreamProbe(m.params.ContentID, outcome, reason)
 		m.sink.OnStreamFailed(m.params.Engine.ContainerID)
 		m.sink.OnStreamEnded(m.params.ContentID)
 		return
@@ -150,7 +155,8 @@ func (m *Manager) Run(ctx context.Context) {
 
 	m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID, m.params.ControlMode, m.params.StreamMode)
 	go m.measureBitrate(ctx)
-	m.startReadLoop(ctx)
+	outcome, reason := m.startReadLoop(ctx)
+	m.sink.OnStreamProbe(m.params.ContentID, outcome, reason)
 	m.sink.OnStreamEnded(m.params.ContentID)
 	m.sendEngineStop()
 }
@@ -309,7 +315,7 @@ func (m *Manager) requestViaAPI(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) startReadLoop(ctx context.Context) {
+func (m *Manager) startReadLoop(ctx context.Context) (string, string) {
 	for {
 		m.mu.Lock()
 		purl := m.playbackURL
@@ -318,7 +324,7 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 
 		if purl == "" {
 			slog.Error("no playback URL, cannot start read loop", "stream", m.params.ContentID)
-			return
+			return "engine_error", "missing playback url"
 		}
 
 		m.buf.Reset()
@@ -358,8 +364,8 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 			m.touchRedisTimestamp(rediskeys.LastClientDisconnect(m.params.ContentID), 60*time.Second)
 			if err := m.requestStream(ctx); err != nil {
 				slog.Error("engine request failed after swap", "stream", m.params.ContentID, "err", err)
-				m.sink.OnStreamEnded(m.params.ContentID)
-				return
+				outcome, reason := classifyProbeOutcome(err)
+				return outcome, reason
 			}
 
 		case err := <-readerDone:
@@ -367,19 +373,40 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 			readerCancel()
 			if err != nil && ctx.Err() == nil {
 				slog.Warn("upstream reader exited", "stream", m.params.ContentID, "err", err)
+				return classifyProbeOutcome(err)
 			} else {
 				slog.Info("upstream reader finished", "stream", m.params.ContentID)
+				return "success", "reader finished"
 			}
-			return
 
 		case <-ctx.Done():
 			stopKeepalive()
 			readerCancel()
 			r.Stop()
 			<-readerDone
-			return
+			return "success", "context cancelled"
 		}
 		readerCancel()
+	}
+}
+
+func classifyProbeOutcome(err error) (string, string) {
+	if err == nil {
+		return "success", ""
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return "engine_error", "unknown error"
+	}
+	switch {
+	case strings.Contains(msg, "timeout"), strings.Contains(msg, "deadline exceeded"):
+		return "timeout", msg
+	case strings.Contains(msg, "engine error"), strings.Contains(msg, "engine returned"), strings.Contains(msg, "ace_api"), strings.Contains(msg, "auth"):
+		return "engine_error", msg
+	case strings.Contains(msg, "connection refused"), strings.Contains(msg, "connection reset"), strings.Contains(msg, "no route to host"), strings.Contains(msg, "connect:"), strings.Contains(msg, "read error"):
+		return "vpn_error", msg
+	default:
+		return "engine_error", msg
 	}
 }
 
