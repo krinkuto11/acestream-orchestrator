@@ -441,6 +441,22 @@ func ApplyVPNSettings(m map[string]any) {
 			if s, ok := v.(string); ok {
 				n.VPNServersRefreshSource = s
 			}
+		case "reputation_active_probing_enabled":
+			if b, ok := v.(bool); ok {
+				n.ReputationActiveProbingEnabled = b
+			}
+		case "reputation_active_probe_min_idle_creds":
+			if p := toInt(v); p >= 0 {
+				n.ReputationActiveProbeMinIdleCreds = p
+			}
+		case "reputation_active_probe_interval_secs":
+			if p := toInt(v); p > 0 {
+				n.ReputationActiveProbeIntervalSecs = p
+			}
+		case "reputation_active_probe_max_secs":
+			if p := toInt(v); p > 0 {
+				n.ReputationActiveProbeMaxSecs = p
+			}
 		}
 	}
 	C.Store(&n)

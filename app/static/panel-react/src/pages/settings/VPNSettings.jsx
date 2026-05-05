@@ -86,6 +86,10 @@ const DEFAULTS = {
   vpn_servers_proton_filter_secure_core: 'include',
   vpn_servers_proton_filter_tor: 'include',
   wireguard_mtu: 0,
+  reputation_active_probing_enabled: false,
+  reputation_active_probe_min_idle_creds: 1,
+  reputation_active_probe_interval_secs: 300,
+  reputation_active_probe_max_secs: 60,
 }
 
 const toNumber = (value, fallback = 0) => {
@@ -186,6 +190,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [wgText, setWgText] = useState('')
   const [openvpnUser, setOpenvpnUser] = useState('')
   const [openvpnPassword, setOpenvpnPassword] = useState('')
+  const [editingCredentialId, setEditingCredentialId] = useState(null)
 
   const dirty = useMemo(() => {
     return JSON.stringify(draft) !== JSON.stringify(initialState)
@@ -440,6 +445,8 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           ...payload, ...parsed,
           addresses: parsed?.address || (Array.isArray(parsed?.addresses) ? parsed.addresses.join(',') : ''),
           source: 'sheet-paste.conf',
+          conf_text: confText,
+          file_content: confText,
         }
       } else {
         const username = String(openvpnUser || '').trim()
@@ -447,15 +454,22 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         if (!username || !password) throw new Error('OpenVPN username and password are required')
         payload = { ...payload, openvpn_user: username, openvpn_password: password, username, password }
       }
-      const credentialId = String(payload?.id || `cred-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`)
-      setCredentials((prev) => [...prev, { ...payload, id: credentialId }])
-      setMessage('Credential added to draft; save changes to apply')
+      const credentialId = String(editingCredentialId || payload?.id || `cred-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      if (editingCredentialId) {
+        // Replace existing credential in draft
+        setCredentials((prev) => prev.map((c) => (String(c?.id || '') === String(editingCredentialId) ? { ...c, ...payload, id: credentialId } : c)))
+        setMessage('Credential edited in draft; save changes to apply')
+      } else {
+        setCredentials((prev) => [...prev, { ...payload, id: credentialId }])
+        setMessage('Credential added to draft; save changes to apply')
+      }
       setDialogOpen(false)
       setWgText('')
       setOpenvpnUser('')
       setOpenvpnPassword('')
       setCredentialRegions('')
       setCredentialAirVPNPorts('')
+      setEditingCredentialId(null)
     } catch (addError) {
       setError(`Failed to add credential: ${addError.message || String(addError)}`)
     } finally {
@@ -776,6 +790,34 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                   <td style={{ textAlign: 'right' }}>
                     <button
                       type="button"
+                      onClick={() => {
+                        // Open dialog pre-filled for editing
+                        const cred = credential || {}
+                        setEditingCredentialId(String(cred.id || ''))
+                        setCredentialProvider(cred.provider || 'protonvpn')
+                        setCredentialMode((cred.protocol || 'wireguard'))
+                        setCredentialRegions(Array.isArray(cred.regions) ? cred.regions.join(', ') : (cred.regions || ''))
+                        setCredentialPortForwarding(Boolean(cred.port_forwarding))
+                        setCredentialAirVPNPorts(Array.isArray(cred.firewall_vpn_input_ports) ? cred.firewall_vpn_input_ports.join(',') : (cred.firewall_vpn_input_ports || ''))
+                        if ((cred.protocol || 'wireguard').toLowerCase() === 'openvpn') {
+                          setOpenvpnUser(cred.openvpn_user || cred.username || '')
+                          setOpenvpnPassword(cred.openvpn_password || cred.password || '')
+                          setWgText('')
+                        } else {
+                          // For wireguard, pre-fill with stored conf if available
+                          setWgText(cred.conf_text || cred.file_content || '')
+                          setOpenvpnUser('')
+                          setOpenvpnPassword('')
+                        }
+                        setDialogOpen(true)
+                      }}
+                      className="tag tag-yellow"
+                      style={{ cursor: 'pointer', padding: '2px 8px', fontSize: 9, marginRight: 6 }}
+                    >
+                      ✎ EDIT
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => removeCredential(credential?.id)}
                       className="tag tag-red"
                       style={{ cursor: 'pointer', padding: '2px 8px', fontSize: 9 }}
@@ -802,10 +844,10 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             background: 'var(--bg-1)', borderLeft: '1px solid var(--line)',
             display: 'flex', flexDirection: 'column',
           }}>
-            <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ flex: 1 }}>
-                <div className="label">ADD VPN CREDENTIAL</div>
-                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>Credential changes stay local until you save settings.</div>
+                <div className="label">{editingCredentialId ? 'EDIT VPN CREDENTIAL' : 'ADD VPN CREDENTIAL'}</div>
+                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>{editingCredentialId ? 'Edit credential details and save settings to apply changes.' : 'Credential changes stay local until you save settings.'}</div>
               </div>
               <button
                 type="button"
@@ -909,7 +951,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                 className="tag tag-green"
                 style={{ cursor: dialogLoading ? 'not-allowed' : 'pointer', padding: '6px 16px', opacity: dialogLoading ? 0.6 : 1 }}
               >
-                {dialogLoading ? '⟳ SAVING...' : '+ ADD CREDENTIAL'}
+                {dialogLoading ? '⟳ SAVING...' : (editingCredentialId ? '✓ SAVE CHANGES' : '+ ADD CREDENTIAL')}
               </button>
             </div>
           </div>

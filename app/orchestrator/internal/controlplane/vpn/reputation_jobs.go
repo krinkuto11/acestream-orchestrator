@@ -127,13 +127,16 @@ func jobAutoQuarantine(ctx context.Context, db *sql.DB) {
 // underprobed servers using recently-seen content IDs, building reputation
 // data independently of user demand.
 func jobActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine) {
+	const minInterval = 60 * time.Second
 	cfg := config.C.Load()
 	interval := time.Duration(cfg.ReputationActiveProbeIntervalSecs) * time.Second
-	if interval <= 0 {
+	if interval < minInterval {
 		interval = 300 * time.Second
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	slog.Info("active probe job started", "interval_s", int(interval.Seconds()), "enabled", cfg.ReputationActiveProbingEnabled)
 
 	for {
 		select {
@@ -141,21 +144,31 @@ func jobActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine) {
 			return
 		case <-ticker.C:
 			cfg = config.C.Load()
+
+			newInterval := time.Duration(cfg.ReputationActiveProbeIntervalSecs) * time.Second
+			if newInterval < minInterval {
+				newInterval = 300 * time.Second
+			}
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
+
 			if !cfg.ReputationActiveProbingEnabled {
+				slog.Debug("active probe: disabled, skipping tick")
 				continue
 			}
 
-			interval = time.Duration(cfg.ReputationActiveProbeIntervalSecs) * time.Second
-			ticker.Reset(interval)
-
 			if re.prov == nil || re.spawner == nil || re.probes == nil {
+				slog.Warn("active probe: not ready (prov/spawner/probes nil), skipping tick")
 				continue
 			}
 
 			// Guard: keep at least MinIdleCreds available for demand spikes.
 			idle := re.prov.creds.AvailableCount()
-			if idle <= cfg.ReputationActiveProbeMinIdleCreds {
-				slog.Debug("active probe: insufficient idle creds", "idle", idle, "min", cfg.ReputationActiveProbeMinIdleCreds)
+			min := cfg.ReputationActiveProbeMinIdleCreds
+			if idle <= min {
+				slog.Info("active probe: skipping — insufficient idle creds", "idle", idle, "min_required", min+1)
 				continue
 			}
 
