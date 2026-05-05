@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 
-export function ReputationFilters({ filter, onChange, totalMatched, totalAll }) {
+export function ReputationFilters({ filter, onChange, totalMatched, totalAll, showProtonSource = false }) {
   const [q, setQ] = useState(filter.q || '')
 
   // Debounce q.
@@ -17,7 +17,7 @@ export function ReputationFilters({ filter, onChange, totalMatched, totalAll }) 
     quarantined: filter.quarantined === 'include' ? 'only' : 'include',
   })
 
-  const srcOptions = ['all', 'proton', 'gluetun']
+  const srcOptions = showProtonSource ? ['all', 'proton', 'gluetun'] : ['all', 'gluetun']
 
   return (
     <div style={{

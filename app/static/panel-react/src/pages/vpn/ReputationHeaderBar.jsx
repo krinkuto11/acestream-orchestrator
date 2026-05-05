@@ -1,7 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 
-export function ReputationHeaderBar({ stats = {}, orchUrl, apiKey, onRefresh }) {
+export function ReputationHeaderBar({ stats = {}, orchUrl, apiKey, onRefresh, showProtonRefresh = false }) {
   const navigate = useNavigate()
 
   const total   = Object.values(stats.by_source || {}).reduce((a, b) => a + b, 0)
@@ -51,13 +51,15 @@ export function ReputationHeaderBar({ stats = {}, orchUrl, apiKey, onRefresh }) 
 
       <div style={{ flex: 1 }}/>
 
-      <button
-        onClick={handleRefreshProton}
-        style={btnStyle}
-        title="Refresh ProtonVPN server catalog"
-      >
-        ⟳ REFRESH PROTON
-      </button>
+      {showProtonRefresh && (
+        <button
+          onClick={handleRefreshProton}
+          style={btnStyle}
+          title="Refresh ProtonVPN server catalog"
+        >
+          ⟳ REFRESH PROTON
+        </button>
+      )}
 
       <button
         onClick={() => navigate('/vpn/probes')}

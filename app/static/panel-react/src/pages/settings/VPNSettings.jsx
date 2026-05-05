@@ -177,6 +177,14 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const sheetProviderNormalized = useMemo(() => normalizeProvider(credentialProvider), [credentialProvider])
   const sheetProviderSupportsForwarding = useMemo(() => isForwardingSupported(sheetProviderNormalized), [sheetProviderNormalized])
   const hasCredentials = credentials.length > 0
+  const hasProtonCredentials = useMemo(
+    () => credentials.some((credential) => normalizeProvider(credential?.provider) === 'protonvpn'),
+    [credentials],
+  )
+  const refreshSourceOptions = useMemo(
+    () => (hasProtonCredentials ? VPN_SERVER_REFRESH_SOURCE_OPTIONS : VPN_SERVER_REFRESH_SOURCE_OPTIONS.filter((o) => o.value !== 'proton_paid')),
+    [hasProtonCredentials],
+  )
   const vpnToggleDisabled = !hasCredentials && !draft.enabled
 
   const leasesByCredentialId = useMemo(() => {
@@ -255,6 +263,9 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         vpn_servers_proton_filter_tor: String(payload?.vpn_servers_proton_filter_tor || 'include'),
         wireguard_mtu: toNumber(payload?.wireguard_mtu, DEFAULTS.wireguard_mtu),
       }
+      if (!hasProtonCredentials && normalized.vpn_servers_refresh_source === 'proton_paid') {
+        normalized.vpn_servers_refresh_source = 'gluetun_official'
+      }
       setInitialState(normalized)
       setDraft(normalized)
       const loadedCredentials = Array.isArray(payload?.credentials) ? payload.credentials : []
@@ -299,7 +310,9 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           trigger_migration: Boolean(draft.enabled) !== Boolean(initialState.enabled),
           vpn_servers_auto_refresh: Boolean(draft.vpn_servers_auto_refresh),
           vpn_servers_refresh_period_s: Math.max(60, toNumber(draft.vpn_servers_refresh_period_s, DEFAULTS.vpn_servers_refresh_period_s)),
-          vpn_servers_refresh_source: String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source),
+          vpn_servers_refresh_source: hasProtonCredentials
+            ? String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source)
+            : 'gluetun_official',
           vpn_servers_gluetun_json_mode: String(draft.vpn_servers_gluetun_json_mode || DEFAULTS.vpn_servers_gluetun_json_mode),
           vpn_servers_storage_path: String(draft.vpn_servers_storage_path || '').trim() || null,
           vpn_servers_official_url: String(draft.vpn_servers_official_url || DEFAULTS.vpn_servers_official_url).trim(),
@@ -436,7 +449,14 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   }
 
   const removeCredential = (credentialId) => {
-    setCredentials((prev) => prev.filter((c) => String(c?.id || '') !== String(credentialId || '')))
+    setCredentials((prev) => {
+      const nextCredentials = prev.filter((c) => String(c?.id || '') !== String(credentialId || ''))
+      const stillHasProton = nextCredentials.some((credential) => normalizeProvider(credential?.provider) === 'protonvpn')
+      if (!stillHasProton && draft.vpn_servers_refresh_source === 'proton_paid') {
+        setDraft((current) => ({ ...current, vpn_servers_refresh_source: 'gluetun_official' }))
+      }
+      return nextCredentials
+    })
     setError('')
     setMessage('Credential removal queued; save changes to apply')
   }
@@ -450,15 +470,16 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setError('')
     setMessage('')
     try {
+      const refreshSource = hasProtonCredentials ? draft.vpn_servers_refresh_source : 'gluetun_official'
       const headers = { 'Content-Type': 'application/json' }
       if (String(apiKey || '').trim()) headers.Authorization = `Bearer ${String(apiKey).trim()}`
       const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh`, {
         method: 'POST', headers,
         body: JSON.stringify({
-          source: draft.vpn_servers_refresh_source,
+          source: refreshSource,
           gluetun_json_mode: draft.vpn_servers_gluetun_json_mode,
           reason: 'manual-ui',
-          filters: draft.vpn_servers_refresh_source === 'proton_paid' ? {
+          filters: refreshSource === 'proton_paid' ? {
             p2p: draft.vpn_servers_proton_filter_p2p,
             secure_core: draft.vpn_servers_proton_filter_secure_core,
             tor: draft.vpn_servers_proton_filter_tor,
@@ -548,7 +569,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
               <div className="label" style={{ marginBottom: 10 }}>VPN SERVER LIST REFRESH</div>
               <SettingRow label="Refresh Source" description="Choose where server catalog updates come from.">
                 <select value={draft.vpn_servers_refresh_source} onChange={(e) => update('vpn_servers_refresh_source', e.target.value)} style={selectStyle}>
-                  {VPN_SERVER_REFRESH_SOURCE_OPTIONS.map((o) => (
+                  {refreshSourceOptions.map((o) => (
                     <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>
@@ -574,7 +595,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                   <input value={draft.vpn_servers_official_url} style={{ ...inputStyle, width: 280 }} onChange={(e) => update('vpn_servers_official_url', e.target.value)}/>
                 </SettingRow>
               )}
-              {draft.vpn_servers_refresh_source === 'proton_paid' && (
+              {hasProtonCredentials && draft.vpn_servers_refresh_source === 'proton_paid' && (
                 <>
                   <SettingRow label="Proton Credentials Source" description="Use environment variables or persisted settings values.">
                     <select value={draft.vpn_servers_proton_credentials_source} onChange={(e) => update('vpn_servers_proton_credentials_source', e.target.value)} style={selectStyle}>

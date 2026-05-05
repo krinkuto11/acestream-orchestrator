@@ -112,6 +112,7 @@ type ListServersFilter struct {
 	Q           string // substring on name/country/city/hostname
 	CC          []string
 	Quarantined string // "include"|"exclude"|"only"
+	UsedOnly    bool   // when true, only return servers with at least one probe record
 	Sort        string // "score"|"load"|"ttfb"|"name"|"country"
 	Dir         string // "asc"|"desc"
 	Category    string // category key for reputation join (default "_overall")
@@ -245,6 +246,9 @@ func ListVPNServers(ctx context.Context, db *sql.DB, f ListServersFilter) ([]VPN
 			args = append(args, cc)
 		}
 	}
+	if f.UsedOnly {
+		where = append(where, "EXISTS (SELECT 1 FROM vpn_probe p WHERE p.server_id=s.id)")
+	}
 	switch f.Quarantined {
 	case "exclude":
 		where = append(where, "(s.quarantined_until IS NULL OR s.quarantined_until <= datetime('now'))")
@@ -309,21 +313,26 @@ func ListVPNServers(ctx context.Context, db *sql.DB, f ListServersFilter) ([]VPN
 	}
 
 	// Compute stats from full set (separate cheap query).
-	stats, _ := serverListStats(ctx, db, cat)
+	stats, _ := serverListStats(ctx, db, cat, f.UsedOnly)
 
 	return results, nextCursor, stats, nil
 }
 
-func serverListStats(ctx context.Context, db *sql.DB, cat string) (ListStats, error) {
+func serverListStats(ctx context.Context, db *sql.DB, cat string, usedOnly bool) (ListStats, error) {
 	stats := ListStats{
 		BySource: map[string]int{},
 		ByStatus: map[string]int{},
 		ByColor:  map[string]int{},
 	}
+	usedClause := ""
+	if usedOnly {
+		usedClause = "WHERE EXISTS (SELECT 1 FROM vpn_probe p WHERE p.server_id=s.id)"
+	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.source, s.status, COALESCE(r.score_color,'red') as color, count(*) as n
 		FROM vpn_server s
 		LEFT JOIN vpn_reputation r ON r.server_id=s.id AND r.category=? AND r.window='30d'
+		`+usedClause+`
 		GROUP BY s.source, s.status, color
 	`, cat)
 	if err != nil {

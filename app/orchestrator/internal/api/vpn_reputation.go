@@ -23,6 +23,7 @@ func (s *ProxyServer) mgHandleListVPNRepServers(w http.ResponseWriter, r *http.R
 		Source:      q.Get("source"),
 		Q:           q.Get("q"),
 		Quarantined: q.Get("quarantined"),
+		UsedOnly:    true,
 		Sort:        q.Get("sort"),
 		Dir:         q.Get("dir"),
 		Category:    q.Get("category"),

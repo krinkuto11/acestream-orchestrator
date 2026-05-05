@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ReputationHeaderBar } from './ReputationHeaderBar'
 import { ReputationFilters } from './ReputationFilters'
@@ -7,8 +7,11 @@ import { ReputationRightRail } from './ReputationRightRail'
 import { useVpnServers } from './hooks/useVpnServers'
 import { useRecentProbes } from './hooks/useRecentProbes'
 
+const normalizeProvider = (provider) => String(provider || '').trim().toLowerCase()
+
 export function ReputationPage({ orchUrl, apiKey, vpnNodes = [] }) {
   const [searchParams, setSearchParams] = useSearchParams()
+  const [vpnSettings, setVpnSettings] = useState(null)
 
   const [filter, setFilter] = useState({
     source: searchParams.get('source') || 'all',
@@ -40,8 +43,50 @@ export function ReputationPage({ orchUrl, apiKey, vpnNodes = [] }) {
     })
   }, [handleFilterChange])
 
+  useEffect(() => {
+    let cancelled = false
+
+    const fetchVpnSettings = async () => {
+      try {
+        const headers = {}
+        if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+        const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, { headers })
+        if (!response.ok) return
+        const payload = await response.json().catch(() => ({}))
+        if (!cancelled) setVpnSettings(payload)
+      } catch {
+        if (!cancelled) setVpnSettings(null)
+      }
+    }
+
+    fetchVpnSettings()
+    return () => {
+      cancelled = true
+    }
+  }, [orchUrl, apiKey])
+
+  const hasProtonCredentials = useMemo(() => {
+    const credentials = Array.isArray(vpnSettings?.credentials) ? vpnSettings.credentials : []
+    return credentials.some((credential) => normalizeProvider(credential?.provider) === 'protonvpn')
+  }, [vpnSettings])
+
+  useEffect(() => {
+    if (hasProtonCredentials) return
+    if (filter.source === 'proton') {
+      handleFilterChange({ ...filter, source: 'gluetun' })
+    }
+  }, [filter, hasProtonCredentials, handleFilterChange])
+
+  const queryFilter = useMemo(() => {
+    if (hasProtonCredentials) return filter
+    if (filter.source === 'proton' || filter.source === 'all') {
+      return { ...filter, source: 'gluetun' }
+    }
+    return filter
+  }, [filter, hasProtonCredentials])
+
   const { items, nextCursor, totalMatched, stats, loading, loadMore, refetch } = useVpnServers({
-    orchUrl, apiKey, filter,
+    orchUrl, apiKey, filter: queryFilter,
   })
 
   const { probes } = useRecentProbes({ orchUrl, apiKey })
@@ -53,12 +98,14 @@ export function ReputationPage({ orchUrl, apiKey, vpnNodes = [] }) {
         orchUrl={orchUrl}
         apiKey={apiKey}
         onRefresh={refetch}
+        showProtonRefresh={hasProtonCredentials}
       />
       <ReputationFilters
         filter={filter}
         onChange={handleFilterChange}
         totalMatched={totalMatched}
         totalAll={Object.values(stats.by_source || {}).reduce((a, b) => a + b, 0)}
+        showProtonSource={hasProtonCredentials}
       />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
