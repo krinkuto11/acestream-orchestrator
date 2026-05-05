@@ -281,7 +281,7 @@ func ListVPNServers(ctx context.Context, db *sql.DB, f ListServersFilter) ([]VPN
 		       r.ttfb_p50_ms, r.ttfb_p95_ms, r.duration_avg_ms, r.drops_n,
 		       r.score, r.score_color, r.low_confidence, r.history_30, r.updated_at
 		FROM vpn_server s
-		LEFT JOIN vpn_reputation r ON r.server_id=s.id AND r.category=? AND r.window='30d'
+		LEFT JOIN vpn_reputation r ON r.server_id=s.id AND r.category=? AND r.window='24h'
 		WHERE %s
 		ORDER BY %s %s, s.id ASC
 		LIMIT ?
@@ -993,7 +993,7 @@ func scanServerWithRep(row rscanner) (VPNServerWithRep, error) {
 		rep := &VPNReputationRow{
 			ServerID:      s.ID,
 			Category:      "_overall",
-			Window:        "30d",
+			Window:        "24h",
 			Score:         score.Float64,
 			ScoreColor:    scoreColor.String,
 			LowConfidence: lowConf.Int64 == 1,
