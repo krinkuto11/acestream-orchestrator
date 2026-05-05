@@ -83,18 +83,18 @@ type VPNServerWithRep struct {
 }
 
 type RecentProbeSummary struct {
-	ContentID   string
-	Category    string
-	StartedAt   time.Time
-	SampleN     int
-	SuccessesN  int
-	TtfbAvgMs   *int
+	ContentID  string
+	Category   string
+	StartedAt  time.Time
+	SampleN    int
+	SuccessesN int
+	TtfbAvgMs  *int
 }
 
 type ServerDetail struct {
-	Server         VPNServerWithRep
-	ByCategory     []CategoryRepRow
-	RecentProbes   []VPNProbeRow
+	Server       VPNServerWithRep
+	ByCategory   []CategoryRepRow
+	RecentProbes []VPNProbeRow
 }
 
 type CategoryRepRow struct {
@@ -780,10 +780,10 @@ func GetScoredCandidates(ctx context.Context, db *sql.DB, category string, exclu
 // ── Scoring ───────────────────────────────────────────────────────────────────
 
 type ReputationConfig struct {
-	WSuccess       float64
-	WTtfb          float64
-	WDuration      float64
-	LowConfProbes  int
+	WSuccess        float64
+	WTtfb           float64
+	WDuration       float64
+	LowConfProbes   int
 	ColorThresholds [4]float64 // [green, amber, magenta, red] thresholds
 }
 
@@ -929,11 +929,11 @@ func scanServerWithRep(row rscanner) (VPNServerWithRep, error) {
 	result := VPNServerWithRep{VPNServerRow: s}
 	if score.Valid {
 		rep := &VPNReputationRow{
-			ServerID:    s.ID,
-			Category:    "_overall",
-			Window:      "30d",
-			Score:       score.Float64,
-			ScoreColor:  scoreColor.String,
+			ServerID:      s.ID,
+			Category:      "_overall",
+			Window:        "30d",
+			Score:         score.Float64,
+			ScoreColor:    scoreColor.String,
 			LowConfidence: lowConf.Int64 == 1,
 		}
 		if probesN.Valid {

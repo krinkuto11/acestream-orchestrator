@@ -79,12 +79,12 @@ func (s *ProxyServer) mgHandleGetVPNRepServer(w http.ResponseWriter, r *http.Req
 	byCat := make([]map[string]any, 0, len(detail.ByCategory))
 	for _, c := range detail.ByCategory {
 		byCat = append(byCat, map[string]any{
-			"category":    c.Category,
-			"score":       c.Score,
-			"score_color": c.ScoreColor,
-			"probes_n":    c.ProbesN,
+			"category":     c.Category,
+			"score":        c.Score,
+			"score_color":  c.ScoreColor,
+			"probes_n":     c.ProbesN,
 			"success_rate": c.SuccessRate,
-			"ttfb_p50_ms": c.TtfbP50Ms,
+			"ttfb_p50_ms":  c.TtfbP50Ms,
 		})
 	}
 
@@ -251,15 +251,15 @@ func (s *ProxyServer) mgHandleVPNPin(w http.ResponseWriter, r *http.Request) {
 func (s *ProxyServer) mgHandleGetRepConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := config.C.Load()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"w_success":              cfg.ReputationWSuccess,
-		"w_ttfb":                 cfg.ReputationWTtfb,
-		"w_duration":             cfg.ReputationWDuration,
-		"low_conf_probes":        cfg.ReputationLowConfProbes,
-		"refresh_seconds":        cfg.ReputationRefreshSeconds,
-		"max_stale_seconds":      cfg.ReputationMaxStaleSeconds,
-		"auto_quarantine_n":      cfg.ReputationAutoQuarantineN,
-		"auto_quarantine_for_s":  int(cfg.ReputationAutoQuarantineFor.Seconds()),
-		"enabled":                cfg.ReputationEnabled,
+		"w_success":             cfg.ReputationWSuccess,
+		"w_ttfb":                cfg.ReputationWTtfb,
+		"w_duration":            cfg.ReputationWDuration,
+		"low_conf_probes":       cfg.ReputationLowConfProbes,
+		"refresh_seconds":       cfg.ReputationRefreshSeconds,
+		"max_stale_seconds":     cfg.ReputationMaxStaleSeconds,
+		"auto_quarantine_n":     cfg.ReputationAutoQuarantineN,
+		"auto_quarantine_for_s": int(cfg.ReputationAutoQuarantineFor.Seconds()),
+		"enabled":               cfg.ReputationEnabled,
 	})
 }
 
@@ -267,11 +267,11 @@ func (s *ProxyServer) mgHandleGetRepConfig(w http.ResponseWriter, r *http.Reques
 
 func (s *ProxyServer) mgHandlePatchRepConfig(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		WSuccess   *float64 `json:"w_success"`
-		WTtfb      *float64 `json:"w_ttfb"`
-		WDuration  *float64 `json:"w_duration"`
-		LowConfN   *int     `json:"low_conf_probes"`
-		Enabled    *bool    `json:"enabled"`
+		WSuccess  *float64 `json:"w_success"`
+		WTtfb     *float64 `json:"w_ttfb"`
+		WDuration *float64 `json:"w_duration"`
+		LowConfN  *int     `json:"low_conf_probes"`
+		Enabled   *bool    `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
