@@ -2,6 +2,7 @@ package vpn
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,93 +14,47 @@ import (
 	"sync"
 	"time"
 
-	goredis "github.com/redis/go-redis/v9"
+	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/persistence"
 )
 
 // providerStorageAliases maps shorthand names to the canonical key used in servers.json.
 var providerStorageAliases = map[string]string{
-	"pia":                    "private internet access",
-	"privateinternetaccess":  "private internet access",
+	"pia":                     "private internet access",
+	"privateinternetaccess":   "private internet access",
 	"private_internet_access": "private internet access",
-}
-
-// providerFlagAliases maps canonical names to gluetun format-servers flags.
-var providerFlagAliases = map[string]string{
-	"private internet access": "pia",
-	"privateinternetaccess":   "pia",
 }
 
 type catalogEntry struct {
 	mtime float64
 	data  map[string]interface{}
-	// providerKey -> []server
 	index map[string][]map[string]interface{}
 }
 
-// ReputationManager manages VPN hostname reputation backed by a Redis blacklist
-// and a file-based servers.json catalog with mtime caching.
-type ReputationManager struct {
-	mu          sync.Mutex
-	catalogs    map[string]*catalogEntry // absolute path -> entry
-	rdb         *goredis.Client
-	serversDir  string // directory containing servers.json files
+// ── CatalogManager ─────────────────────────────────────────────────────────────
+// Handles servers.json catalog loading (kept separate from reputation scoring).
+
+type CatalogManager struct {
+	mu         sync.Mutex
+	catalogs   map[string]*catalogEntry
+	serversDir string
 }
 
-func NewReputationManager(rdb *goredis.Client, serversDir string) *ReputationManager {
-	return &ReputationManager{
+func NewCatalogManager(serversDir string) *CatalogManager {
+	return &CatalogManager{
 		catalogs:   make(map[string]*catalogEntry),
-		rdb:        rdb,
 		serversDir: serversDir,
 	}
 }
 
-// ── Blacklist ─────────────────────────────────────────────────────────────────
-
-func blacklistKey(hostname string) string {
-	return fmt.Sprintf("ace_proxy:blacklist:vpn:%s", hostname)
-}
-
-// BlacklistHostname marks a VPN hostname as burned in Redis with a TTL.
-func (rm *ReputationManager) BlacklistHostname(ctx context.Context, hostname string, ttlSeconds int) {
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
-	if hostname == "" || rm.rdb == nil {
-		return
-	}
-	if ttlSeconds <= 0 {
-		ttlSeconds = 86400
-	}
-	if err := rm.rdb.SetEx(ctx, blacklistKey(hostname), "burned", time.Duration(ttlSeconds)*time.Second).Err(); err != nil {
-		slog.Warn("VPN blacklist set failed", "hostname", hostname, "err", err)
-		return
-	}
-	slog.Info("VPN hostname blacklisted", "hostname", hostname, "ttl_s", ttlSeconds)
-}
-
-// IsBlacklisted returns true if the hostname is currently blacklisted.
-func (rm *ReputationManager) IsBlacklisted(ctx context.Context, hostname string) bool {
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
-	if hostname == "" || rm.rdb == nil {
-		return false
-	}
-	n, err := rm.rdb.Exists(ctx, blacklistKey(hostname)).Result()
-	if err != nil {
-		return false
-	}
-	return n > 0
-}
-
-// ── Catalog ───────────────────────────────────────────────────────────────────
-
-func (rm *ReputationManager) serversJSONPath(filename string) string {
-	// Check GLUETUN_SERVERS_JSON_PATH env var.
+func (cm *CatalogManager) serversJSONPath(filename string) string {
 	configured := strings.TrimSpace(os.Getenv("GLUETUN_SERVERS_JSON_PATH"))
-	if configured == "" && rm.serversDir != "" {
-		configured = rm.serversDir
+	if configured == "" && cm.serversDir != "" {
+		configured = cm.serversDir
 	}
 	if configured != "" {
 		ext := filepath.Ext(configured)
 		if ext == ".json" {
-			// It's a specific file path.
 			if filename == "servers.json" {
 				return configured
 			}
@@ -107,25 +62,24 @@ func (rm *ReputationManager) serversJSONPath(filename string) string {
 		}
 		return filepath.Join(configured, filename)
 	}
-	// Default: working directory.
 	return filename
 }
 
-func (rm *ReputationManager) loadCatalog(filename string) (map[string]interface{}, error) {
-	path := rm.serversJSONPath(filename)
+func (cm *CatalogManager) loadCatalog(filename string) (map[string]interface{}, error) {
+	path := cm.serversJSONPath(filename)
 
 	fi, err := os.Stat(path)
 	if err != nil {
 		if filename != "servers.json" {
-			return rm.loadCatalog("servers.json")
+			return cm.loadCatalog("servers.json")
 		}
 		return nil, fmt.Errorf("servers catalog not found at %s", path)
 	}
 	mtime := float64(fi.ModTime().UnixNano())
 
-	rm.mu.Lock()
-	cached, ok := rm.catalogs[path]
-	rm.mu.Unlock()
+	cm.mu.Lock()
+	cached, ok := cm.catalogs[path]
+	cm.mu.Unlock()
 
 	if ok && cached.mtime == mtime {
 		return cached.data, nil
@@ -140,7 +94,6 @@ func (rm *ReputationManager) loadCatalog(filename string) (map[string]interface{
 		return nil, err
 	}
 
-	// Build provider index.
 	index := make(map[string][]map[string]interface{})
 	for key, section := range payload {
 		if key == "version" {
@@ -164,9 +117,9 @@ func (rm *ReputationManager) loadCatalog(filename string) (map[string]interface{
 	}
 
 	entry := &catalogEntry{mtime: mtime, data: payload, index: index}
-	rm.mu.Lock()
-	rm.catalogs[path] = entry
-	rm.mu.Unlock()
+	cm.mu.Lock()
+	cm.catalogs[path] = entry
+	cm.mu.Unlock()
 
 	totalServers := 0
 	for _, ss := range index {
@@ -180,27 +133,25 @@ func (rm *ReputationManager) loadCatalog(filename string) (map[string]interface{
 	return payload, nil
 }
 
-// IsCatalogAvailable reports whether the catalog file exists on disk.
-func (rm *ReputationManager) IsCatalogAvailable(filename string) bool {
-	path := rm.serversJSONPath(filename)
+func (cm *CatalogManager) IsCatalogAvailable(filename string) bool {
+	path := cm.serversJSONPath(filename)
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-// ProviderServers returns the server list for a provider from the catalog.
-func (rm *ReputationManager) ProviderServers(provider, catalogFile string) []map[string]interface{} {
-	if _, err := rm.loadCatalog(catalogFile); err != nil {
+func (cm *CatalogManager) ProviderServers(provider, catalogFile string) []map[string]interface{} {
+	if _, err := cm.loadCatalog(catalogFile); err != nil {
 		return nil
 	}
-	path := rm.serversJSONPath(catalogFile)
+	path := cm.serversJSONPath(catalogFile)
 	if _, err := os.Stat(path); err != nil && catalogFile != "servers.json" {
-		path = rm.serversJSONPath("servers.json")
+		path = cm.serversJSONPath("servers.json")
 	}
 
 	provKey := normalizeProviderStorage(provider)
-	rm.mu.Lock()
-	entry := rm.catalogs[path]
-	rm.mu.Unlock()
+	cm.mu.Lock()
+	entry := cm.catalogs[path]
+	cm.mu.Unlock()
 
 	if entry == nil {
 		return nil
@@ -208,13 +159,83 @@ func (rm *ReputationManager) ProviderServers(provider, catalogFile string) []map
 	return entry.index[provKey]
 }
 
-// ── Hostname selection ────────────────────────────────────────────────────────
+// ── ReputationEngine ──────────────────────────────────────────────────────────
 
-// GetSafeHostname selects a low-load, non-blacklisted, non-active hostname for
-// the given provider/protocol/regions combination. Returns "" if none available.
-// excludeHostnames lists hostnames already in use by active VPN nodes so that
-// multiple nodes never share the same physical server.
-func (rm *ReputationManager) GetSafeHostname(
+// ReputationEngine is the central coordinator for VPN server reputation.
+// It replaces the old Redis-backed blacklist with a SQLite-backed scoring system.
+type ReputationEngine struct {
+	db      *sql.DB
+	catalog *CatalogManager
+	probes  *ProbeCollector
+
+	// serverIDCache maps "source:hostname" → server_id to avoid repeated DB lookups.
+	serverIDMu    sync.Mutex
+	serverIDCache map[string]string
+}
+
+func NewReputationEngine(db *sql.DB, serversDir string) *ReputationEngine {
+	return &ReputationEngine{
+		db:            db,
+		catalog:       NewCatalogManager(serversDir),
+		serverIDCache: make(map[string]string),
+	}
+}
+
+func (re *ReputationEngine) SetProbeCollector(pc *ProbeCollector) {
+	re.probes = pc
+}
+
+// DB exposes the underlying database for API handlers.
+func (re *ReputationEngine) DB() *sql.DB {
+	return re.db
+}
+
+// Start launches all background jobs. Call with a root context.
+func (re *ReputationEngine) Start(ctx context.Context) {
+	go runReputationJobs(ctx, re.db)
+}
+
+// ── Server ID resolution ──────────────────────────────────────────────────────
+
+// ResolveServerID returns (or creates) the canonical server ID for a hostname/source pair.
+func (re *ReputationEngine) ResolveServerID(ctx context.Context, source, hostname string) (string, error) {
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if hostname == "" || source == "" {
+		return "", fmt.Errorf("empty hostname or source")
+	}
+
+	key := source + ":" + hostname
+	re.serverIDMu.Lock()
+	if id, ok := re.serverIDCache[key]; ok {
+		re.serverIDMu.Unlock()
+		return id, nil
+	}
+	re.serverIDMu.Unlock()
+
+	id := persistence.ServerID(source, hostname)
+
+	// Ensure a row exists (upsert with minimal data; catalog sync fills details later).
+	existing, _ := persistence.GetVPNServer(ctx, re.db, id)
+	if existing == nil {
+		_ = persistence.UpsertVPNServer(ctx, re.db, persistence.VPNServerRow{
+			ID:       id,
+			Source:   source,
+			Hostname: hostname,
+			Status:   "unknown",
+		})
+	}
+
+	re.serverIDMu.Lock()
+	re.serverIDCache[key] = id
+	re.serverIDMu.Unlock()
+	return id, nil
+}
+
+// ── Scheduling integration ────────────────────────────────────────────────────
+
+// GetSafeHostname selects a high-reputation, non-excluded hostname from the SQLite catalog.
+// Falls back to catalog-only selection if the reputation table is empty.
+func (re *ReputationEngine) GetSafeHostname(
 	ctx context.Context,
 	provider string,
 	regions []string,
@@ -223,7 +244,55 @@ func (rm *ReputationManager) GetSafeHostname(
 	catalogFile string,
 	excludeHostnames []string,
 ) string {
-	candidates := rm.candidateServers(provider, regions, protocol, requirePortForwarding, catalogFile)
+	excluded := make(map[string]bool, len(excludeHostnames))
+	for _, h := range excludeHostnames {
+		excluded[strings.ToLower(strings.TrimSpace(h))] = true
+	}
+
+	cfg := config.C.Load()
+
+	// Try reputation-ranked selection when enabled and data exists.
+	if cfg.ReputationEnabled {
+		candidates, err := persistence.GetScoredCandidates(ctx, re.db, "_overall", excluded)
+		if err == nil && len(candidates) > 0 {
+			// Filter by catalog constraints (provider, regions, protocol, port-forwarding).
+			catalogCandidates := re.candidateServers(provider, regions, protocol, requirePortForwarding, catalogFile)
+			allowed := make(map[string]bool, len(catalogCandidates))
+			for _, s := range catalogCandidates {
+				hn := strings.ToLower(strings.TrimSpace(strVal(s["hostname"])))
+				allowed[hn] = true
+			}
+
+			var eligible []persistence.ScoredServer
+			for _, c := range candidates {
+				if len(allowed) == 0 || allowed[strings.ToLower(c.Hostname)] {
+					eligible = append(eligible, c)
+				}
+			}
+
+			if len(eligible) > 0 {
+				chosen := pickWithJitter(eligible)
+				slog.Info("Selected VPN hostname by reputation", "hostname", chosen.Hostname, "score", chosen.Score)
+				return chosen.Hostname
+			}
+		}
+	}
+
+	// Fallback: catalog-based selection (load-ranked).
+	return re.getSafeHostnameCatalog(ctx, provider, regions, protocol, requirePortForwarding, catalogFile, excluded)
+}
+
+// getSafeHostnameCatalog is the original catalog-based hostname selection logic.
+func (re *ReputationEngine) getSafeHostnameCatalog(
+	ctx context.Context,
+	provider string,
+	regions []string,
+	protocol string,
+	requirePortForwarding bool,
+	catalogFile string,
+	excluded map[string]bool,
+) string {
+	candidates := re.candidateServers(provider, regions, protocol, requirePortForwarding, catalogFile)
 	if len(candidates) == 0 {
 		if requirePortForwarding {
 			slog.Warn("No port-forwarding-capable servers in catalog",
@@ -232,28 +301,20 @@ func (rm *ReputationManager) GetSafeHostname(
 		return ""
 	}
 
-	excluded := make(map[string]bool, len(excludeHostnames))
-	for _, h := range excludeHostnames {
-		excluded[strings.ToLower(strings.TrimSpace(h))] = true
-	}
-
-	// Filter blacklisted and already-active hostnames.
 	var safe []map[string]interface{}
 	for _, s := range candidates {
 		hn := strings.ToLower(strings.TrimSpace(strVal(s["hostname"])))
-		if !rm.IsBlacklisted(ctx, hn) && !excluded[hn] {
+		if !excluded[hn] {
 			safe = append(safe, s)
 		}
 	}
 	if len(safe) == 0 {
-		slog.Warn("All catalog hostnames blacklisted", "provider", provider)
+		slog.Warn("All catalog hostnames excluded", "provider", provider)
 		return ""
 	}
 
-	// Sort by load ascending (unknowns get load=100).
 	sortByLoad(safe)
 
-	// Check if any real load data exists.
 	hasRealLoad := false
 	limit := len(safe)
 	if limit > 10 {
@@ -267,32 +328,80 @@ func (rm *ReputationManager) GetSafeHostname(
 	}
 
 	if !hasRealLoad {
-		// Pure random.
 		chosen := safe[rand.Intn(len(safe))]
 		hn := strings.ToLower(strings.TrimSpace(strVal(chosen["hostname"])))
 		slog.Info("Selected VPN hostname (random, no load data)", "hostname", hn)
 		return hn
 	}
 
-	// Pick randomly from top 5.
 	top := safe
 	if len(top) > 5 {
 		top = top[:5]
 	}
 	chosen := top[rand.Intn(len(top))]
 	hn := strings.ToLower(strings.TrimSpace(strVal(chosen["hostname"])))
-	slog.Info("Selected VPN hostname", "hostname", hn, "load", chosen["load"], "candidates", len(top))
+	slog.Info("Selected VPN hostname (catalog)", "hostname", hn, "load", chosen["load"])
 	return hn
 }
 
-func (rm *ReputationManager) candidateServers(
+// IsExcluded returns true if the server is down or quarantined.
+func (re *ReputationEngine) IsExcluded(ctx context.Context, hostname string) bool {
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if hostname == "" {
+		return false
+	}
+	// Try to find in DB by hostname (check both sources).
+	for _, source := range []string{"proton", "gluetun"} {
+		srv, err := persistence.GetVPNServerByHostname(ctx, re.db, source, hostname)
+		if err != nil || srv == nil {
+			continue
+		}
+		if srv.Status == "down" {
+			return true
+		}
+		if srv.QuarantinedUntil != nil && srv.QuarantinedUntil.After(time.Now()) {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// SetQuarantine sets or lifts a quarantine on a server.
+func (re *ReputationEngine) SetQuarantine(ctx context.Context, serverID string, until *time.Time, reason string) error {
+	return persistence.SetQuarantine(ctx, re.db, serverID, until, reason)
+}
+
+// SetPinned sets the pinned flag on a server.
+func (re *ReputationEngine) SetPinned(ctx context.Context, serverID string, pinned bool) error {
+	return persistence.SetPinned(ctx, re.db, serverID, pinned)
+}
+
+// RecordProbe enqueues a probe for async write to the DB.
+func (re *ReputationEngine) RecordProbe(probe persistence.VPNProbeRow) {
+	if re.probes != nil {
+		re.probes.Record(probe)
+	}
+}
+
+// ── Catalog-facing methods (used by node_provisioner) ─────────────────────────
+
+func (re *ReputationEngine) IsCatalogAvailable(filename string) bool {
+	return re.catalog.IsCatalogAvailable(filename)
+}
+
+func (re *ReputationEngine) ProviderServers(provider, catalogFile string) []map[string]interface{} {
+	return re.catalog.ProviderServers(provider, catalogFile)
+}
+
+func (re *ReputationEngine) candidateServers(
 	provider string,
 	regions []string,
 	protocol string,
 	requirePF bool,
 	catalogFile string,
 ) []map[string]interface{} {
-	servers := rm.ProviderServers(provider, catalogFile)
+	servers := re.catalog.ProviderServers(provider, catalogFile)
 	if len(servers) == 0 {
 		return nil
 	}
@@ -322,6 +431,38 @@ func (rm *ReputationManager) candidateServers(
 		candidates = append(candidates, s)
 	}
 	return candidates
+}
+
+// ── Jitter selection ─────────────────────────────────────────────────────────
+
+// pickWithJitter selects from the top candidates with small score jitter to avoid herding.
+func pickWithJitter(candidates []persistence.ScoredServer) persistence.ScoredServer {
+	if len(candidates) == 0 {
+		return persistence.ScoredServer{}
+	}
+
+	// Prefer pinned servers first.
+	for _, c := range candidates {
+		if c.Pinned {
+			return c
+		}
+	}
+
+	// Pick from top-3 with random jitter (±0.03).
+	top := candidates
+	if len(top) > 3 {
+		top = top[:3]
+	}
+	best := top[0]
+	bestScore := best.Score + (rand.Float64()-0.5)*0.06
+	for _, c := range top[1:] {
+		s := c.Score + (rand.Float64()-0.5)*0.06
+		if s > bestScore {
+			bestScore = s
+			best = c
+		}
+	}
+	return best
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -390,7 +531,6 @@ func serverMatchesRegions(s map[string]interface{}, regions []string) bool {
 }
 
 func sortByLoad(servers []map[string]interface{}) {
-	// Insertion sort — catalog sizes are typically <1000.
 	for i := 1; i < len(servers); i++ {
 		key := servers[i]
 		ki := loadVal(key)

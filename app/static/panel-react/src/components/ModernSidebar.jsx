@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { id: 'monitoring', label: 'Monitor',    glyph: '▧', kbd: '4', href: '/stream-monitoring' },
   { id: 'topology',   label: 'Topology',   glyph: '⌬', kbd: '5', href: '/routing-topology' },
   { id: 'metrics',    label: 'Dashboard',  glyph: '▲', kbd: '6', href: '/metrics' },
+  { id: 'vpn',        label: 'VPN',        glyph: '⊘', kbd: '8', href: '/vpn' },
   { id: 'settings',   label: 'Settings',   glyph: '⌗', kbd: '7', href: '/settings' },
 ]
 
@@ -89,7 +90,9 @@ export function ModernSidebar({ orchestratorStatus, isConnected }) {
         <div className="label" style={{ padding: '0 6px 6px' }}>NAV</div>
         <nav style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           {NAV_ITEMS.map(item => {
-            const isActive = location.pathname === item.href
+            const isActive = item.href === '/'
+              ? location.pathname === '/'
+              : location.pathname.startsWith(item.href)
             return (
               <Link
                 key={item.id}

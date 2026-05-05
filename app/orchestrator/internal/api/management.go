@@ -82,6 +82,17 @@ func (s *ProxyServer) registerManagementRoutes() {
 	s.mux.HandleFunc("POST /api/v1/vpn/proton/refresh", requireAPIKey(s.mgHandleProtonRefresh))
 	s.mux.HandleFunc("GET /api/v1/vpn/servers/refresh/status", s.mgHandleVPNServersRefreshStatus)
 
+	// ── VPN Reputation ────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/vpn/servers", s.mgHandleListVPNRepServers)
+	s.mux.HandleFunc("GET /api/v1/vpn/servers/{id}/detail", s.mgHandleGetVPNRepServer)
+	s.mux.HandleFunc("GET /api/v1/vpn/reputation/recent-probes", s.mgHandleVPNRecentProbes)
+	s.mux.HandleFunc("POST /api/v1/vpn/reputation/probe", requireAPIKey(s.mgHandleVPNManualProbe))
+	s.mux.HandleFunc("GET /api/v1/vpn/reputation/probe/{job_id}", s.mgHandleVPNProbeStatus)
+	s.mux.HandleFunc("POST /api/v1/vpn/servers/{id}/quarantine", requireAPIKey(s.mgHandleVPNQuarantine))
+	s.mux.HandleFunc("POST /api/v1/vpn/servers/{id}/pin", requireAPIKey(s.mgHandleVPNPin))
+	s.mux.HandleFunc("GET /api/v1/vpn/reputation/config", s.mgHandleGetRepConfig)
+	s.mux.HandleFunc("PATCH /api/v1/vpn/reputation/config", requireAPIKey(s.mgHandlePatchRepConfig))
+
 	// ── Settings ──────────────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/settings", requireAPIKey(s.mgHandleGetAllSettings))
 	s.mux.HandleFunc("POST /api/v1/settings", requireAPIKey(s.mgHandleUpdateAllSettings))

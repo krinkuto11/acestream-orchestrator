@@ -44,10 +44,10 @@ type ProvisionResult struct {
 // Provisioner creates and destroys Gluetun VPN containers.
 type Provisioner struct {
 	creds *CredentialManager
-	rep   *ReputationManager
+	rep   *ReputationEngine
 }
 
-func NewProvisioner(creds *CredentialManager, rep *ReputationManager) *Provisioner {
+func NewProvisioner(creds *CredentialManager, rep *ReputationEngine) *Provisioner {
 	return &Provisioner{creds: creds, rep: rep}
 }
 
@@ -613,7 +613,7 @@ func applyOptionalCredentialEnv(env map[string]string, protocol string, cred map
 func applyPFFilterGuard(
 	env map[string]string,
 	provider, protocol, catalogFile string,
-	rep *ReputationManager,
+	rep *ReputationEngine,
 ) {
 	if env["VPN_PORT_FORWARDING"] != "on" {
 		return

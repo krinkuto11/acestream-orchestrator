@@ -88,6 +88,19 @@ func formatSSE(event string, data any) string {
 
 // ─── SSE route registration ───────────────────────────────────────────────────
 
+// vpnBroker fans out vpn.* events to subscribers of /api/v1/vpn/reputation/stream.
+var vpnBroker = &sseBroker{
+	clients: make(map[chan []byte]struct{}),
+}
+
+// PublishVPNEvent publishes a named vpn.* SSE event to all reputation stream subscribers.
+func PublishVPNEvent(eventType string, data any) {
+	msg := []byte(formatSSE(eventType, data))
+	vpnBroker.publish(msg)
+	// Also publish onto the global broker so full_sync subscribers can observe.
+	globalBroker.publish(msg)
+}
+
 func (s *ProxyServer) registerSSERoutes() {
 	s.mux.HandleFunc("GET /api/v1/events/stream", s.handleSSEEventsStream)
 	s.mux.HandleFunc("GET /api/v1/events/live", s.handleSSEEventsLive)
@@ -98,6 +111,43 @@ func (s *ProxyServer) registerSSERoutes() {
 	s.mux.HandleFunc("GET /api/v1/streams/{id}/details/stream", s.handleSSEStreamDetails)
 	s.mux.HandleFunc("GET /api/v1/custom-variant/reprovision/status/stream", s.handleSSEReprovisionStatus)
 	s.mux.HandleFunc("GET /api/v1/settings/engine/reprovision/status/stream", s.handleSSEReprovisionStatus)
+	s.mux.HandleFunc("GET /api/v1/vpn/reputation/stream", s.handleSSEVPNReputation)
+}
+
+// handleSSEVPNReputation streams vpn.* events to the frontend reputation table.
+func (s *ProxyServer) handleSSEVPNReputation(w http.ResponseWriter, r *http.Request) {
+	if !sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	sseHeaders(w)
+
+	ch := vpnBroker.subscribe()
+	defer vpnBroker.unsubscribe(ch)
+
+	ka := time.NewTicker(15 * time.Second)
+	defer ka.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, err := w.Write(msg); err != nil {
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		case <-ka.C:
+			if !writeSSEKeepAlive(w) {
+				return
+			}
+		}
+	}
 }
 
 // ─── SSE helpers ─────────────────────────────────────────────────────────────

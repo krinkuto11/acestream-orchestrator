@@ -22,7 +22,7 @@ const officialGluetunServersURL = "https://raw.githubusercontent.com/qdm12/gluet
 // since it requires the Proton SRP auth flow and is not latency-sensitive.
 type ServersRefreshService struct {
 	serversDir  string
-	rep         *ReputationManager
+	rep         *ReputationEngine
 	mu          sync.Mutex
 	inProgress  bool
 	lastOK      *bool
@@ -33,7 +33,7 @@ type ServersRefreshService struct {
 	once        sync.Once
 }
 
-func NewServersRefreshService(serversDir string, rep *ReputationManager) *ServersRefreshService {
+func NewServersRefreshService(serversDir string, rep *ReputationEngine) *ServersRefreshService {
 	return &ServersRefreshService{
 		serversDir:  serversDir,
 		rep:         rep,

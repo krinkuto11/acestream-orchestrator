@@ -51,6 +51,7 @@ type ProxyServer struct {
 	creds      *vpnpkg.CredentialManager
 	svcRefresh *vpnpkg.ServersRefreshService
 	vpnMgr     *vpnpkg.LifecycleManager
+	repEngine  *vpnpkg.ReputationEngine
 }
 
 // NewProxyServer wires up all proxy routes.
@@ -66,6 +67,7 @@ func NewProxyServer(
 	creds *vpnpkg.CredentialManager,
 	svcRefresh *vpnpkg.ServersRefreshService,
 	vpnMgr *vpnpkg.LifecycleManager,
+	repEngine *vpnpkg.ReputationEngine,
 ) *ProxyServer {
 	s := &ProxyServer{
 		hub:        hub,
@@ -79,6 +81,7 @@ func NewProxyServer(
 		creds:      creds,
 		svcRefresh: svcRefresh,
 		vpnMgr:     vpnMgr,
+		repEngine:  repEngine,
 		mux:        http.NewServeMux(),
 	}
 	s.registerRoutes()

@@ -12,6 +12,9 @@ import { MetricsPage } from './pages/MetricsPage'
 import { StreamMonitoringPage } from './pages/StreamMonitoringPage'
 import { RoutingTopologyPage } from './pages/RoutingTopologyPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { ReputationPage } from './pages/vpn/ReputationPage'
+import { ServerDetailPage } from './pages/vpn/ServerDetailPage'
+import { ProbesPage } from './pages/vpn/ProbesPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useFavicon } from './hooks/useFavicon'
 
@@ -25,6 +28,9 @@ const PAGE_TITLES = {
   '/events':            ['Events',     'audit-log'],
   '/metrics':           ['Dashboard',  'telemetry'],
   '/settings':          ['Settings',   'runtime-config'],
+  '/vpn':               ['VPN',        'reputation'],
+  '/vpn/leases':        ['VPN',        'nodes'],
+  '/vpn/probes':        ['VPN',        'probes'],
 }
 
 // ── Topbar ──────────────────────────────────────────────────────────────────
@@ -408,6 +414,18 @@ function AppContent() {
                   maxEventsDisplay={maxEventsDisplay} setMaxEventsDisplay={setMaxEventsDisplay}
                   orchUrl={orchUrl}
                 />
+              }/>
+              <Route path="/vpn" element={
+                <ReputationPage
+                  orchUrl={orchUrl} apiKey={apiKey}
+                  vpnNodes={Array.isArray(vpnStatus?.vpn_nodes) ? vpnStatus.vpn_nodes : []}
+                />
+              }/>
+              <Route path="/vpn/servers/:id" element={
+                <ServerDetailPage orchUrl={orchUrl} apiKey={apiKey}/>
+              }/>
+              <Route path="/vpn/probes" element={
+                <ProbesPage orchUrl={orchUrl} apiKey={apiKey}/>
               }/>
             </Routes>
           )}

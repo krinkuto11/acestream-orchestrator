@@ -171,6 +171,17 @@ type Config struct {
 	EngineLiveCacheType   string
 	EngineBufferTime      int
 
+	// ── VPN Reputation ───────────────────────────────────────────────────────
+	ReputationEnabled           bool
+	ReputationWSuccess          float64
+	ReputationWTtfb             float64
+	ReputationWDuration         float64
+	ReputationLowConfProbes     int
+	ReputationRefreshSeconds    int
+	ReputationMaxStaleSeconds   int
+	ReputationAutoQuarantineN   int
+	ReputationAutoQuarantineFor time.Duration
+
 	// ── Misc ────────────────────────────────────────────────────────────────
 	AutoDelete bool
 	ManualMode bool
@@ -565,6 +576,16 @@ func load() *Config {
 		EngineBufferTime:      envInt("ENGINE_LIVE_BUFFER", 30),
 
 		AutoDelete: envBool("AUTO_DELETE", true),
+
+		ReputationEnabled:           envBool("REPUTATION_ENABLED", true),
+		ReputationWSuccess:          envFloat("REPUTATION_W_SUCCESS", 0.60),
+		ReputationWTtfb:             envFloat("REPUTATION_W_TTFB", 0.25),
+		ReputationWDuration:         envFloat("REPUTATION_W_DURATION", 0.15),
+		ReputationLowConfProbes:     envInt("REPUTATION_LOW_CONF_PROBES", 5),
+		ReputationRefreshSeconds:    envInt("REPUTATION_REFRESH_SECONDS", 60),
+		ReputationMaxStaleSeconds:   envInt("REPUTATION_MAX_STALE_SECONDS", 300),
+		ReputationAutoQuarantineN:   envInt("REPUTATION_AUTO_QUARANTINE_N", 5),
+		ReputationAutoQuarantineFor: envDur("REPUTATION_AUTO_QUARANTINE_FOR", 3600*time.Second),
 	}
 }
 

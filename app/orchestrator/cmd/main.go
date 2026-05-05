@@ -113,7 +113,7 @@ func main() {
 	// ── Controlplane: VPN subsystem ────────────────────────────────────────────
 	var (
 		creds      *vpnpkg.CredentialManager
-		rep        *vpnpkg.ReputationManager
+		repEngine  *vpnpkg.ReputationEngine
 		prov       *vpnpkg.Provisioner
 		svcRefresh *vpnpkg.ServersRefreshService
 	)
@@ -137,9 +137,21 @@ func main() {
 			}
 		}
 	}
-	rep = vpnpkg.NewReputationManager(rdb, serversDir)
-	prov = vpnpkg.NewProvisioner(creds, rep)
-	svcRefresh = vpnpkg.NewServersRefreshService(serversDir, rep)
+	repEngine = vpnpkg.NewReputationEngine(db, serversDir)
+	probeCollector := vpnpkg.NewProbeCollector(db, func(p persistence.VPNProbeRow) {
+		api.PublishVPNEvent("vpn.probe.completed", map[string]any{
+			"server_id":  p.ServerID,
+			"content_id": p.ContentID,
+			"outcome":    p.Outcome,
+			"ttfb_ms":    p.TtfbMs,
+		})
+	})
+	repEngine.SetProbeCollector(probeCollector)
+	go probeCollector.Run(appCtx)
+	repEngine.Start(appCtx)
+
+	prov = vpnpkg.NewProvisioner(creds, repEngine)
+	svcRefresh = vpnpkg.NewServersRefreshService(serversDir, repEngine)
 	go svcRefresh.Run(appCtx, cfg.VPNServersAutoRefresh, cfg.VPNServersRefreshPeriod)
 
 	vpnManager := vpnpkg.NewLifecycleManager(pub, prov)
@@ -203,7 +215,7 @@ func main() {
 	go monSvc.RunCountsPublisher(appCtx, 5*time.Second)
 	go metrics.RunCollector(appCtx, st, 5*time.Second)
 
-	proxySrv := api.NewProxyServer(hub, monSvc, st, settingsStore, ctrl, cb, pub, prov, creds, svcRefresh, vpnManager)
+	proxySrv := api.NewProxyServer(hub, monSvc, st, settingsStore, ctrl, cb, pub, prov, creds, svcRefresh, vpnManager, repEngine)
 	proxyHTTP := &http.Server{
 		Addr:    cfg.ProxyListenAddr,
 		Handler: proxySrv,
