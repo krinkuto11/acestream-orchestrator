@@ -27,7 +27,7 @@ const apiKeepaliveInterval = 2 * time.Second
 type EventSink interface {
 	OnStreamStarted(contentID, engineID, controlMode, streamMode string)
 	OnStreamPrebuffering(contentID, engineID, engineName, streamMode, controlMode string)
-	OnStreamProbe(contentID, engineID string, startedAt time.Time, controlMode, streamMode, outcome, reason string)
+	OnStreamProbe(contentID, engineID string, startedAt time.Time, controlMode, streamMode, outcome, reason string, ttfbMs *int)
 	OnStreamEnded(contentID string)
 	// OnStreamFailed is called when a stream request fails before OnStreamStarted
 	// fires, so the engine's pending reservation can be released.
@@ -36,11 +36,11 @@ type EventSink interface {
 
 type noopSink struct{}
 
-func (noopSink) OnStreamStarted(_, _, _, _ string)                         {}
-func (noopSink) OnStreamPrebuffering(_, _, _, _, _ string)                 {}
-func (noopSink) OnStreamProbe(_, _ string, _ time.Time, _, _, _, _ string) {}
-func (noopSink) OnStreamEnded(_ string)                                    {}
-func (noopSink) OnStreamFailed(_ string)                                   {}
+func (noopSink) OnStreamStarted(_, _, _, _ string)                                 {}
+func (noopSink) OnStreamPrebuffering(_, _, _, _, _ string)                         {}
+func (noopSink) OnStreamProbe(_, _ string, _ time.Time, _, _, _, _ string, _ *int) {}
+func (noopSink) OnStreamEnded(_ string)                                            {}
+func (noopSink) OnStreamFailed(_ string)                                           {}
 
 // EngineParams describes an AceStream engine to connect to.
 type EngineParams struct {
@@ -138,8 +138,8 @@ func (m *Manager) Run(ctx context.Context) {
 		m.mu.Unlock()
 		m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID, m.params.ControlMode, m.params.StreamMode)
 		go m.measureBitrate(ctx)
-		outcome, reason := m.startReadLoop(ctx)
-		m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason)
+		outcome, reason, ttfb := m.startReadLoop(ctx, startedAt)
+		m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason, ttfb)
 		m.sink.OnStreamEnded(m.params.ContentID)
 		m.sendEngineStop()
 		return
@@ -148,7 +148,7 @@ func (m *Manager) Run(ctx context.Context) {
 	if err := m.requestStream(ctx); err != nil {
 		slog.Error("stream request failed", "stream", m.params.ContentID, "err", err)
 		outcome, reason := classifyProbeOutcome(err)
-		m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason)
+		m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason, nil)
 		m.sink.OnStreamFailed(m.params.Engine.ContainerID)
 		m.sink.OnStreamEnded(m.params.ContentID)
 		return
@@ -156,8 +156,8 @@ func (m *Manager) Run(ctx context.Context) {
 
 	m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID, m.params.ControlMode, m.params.StreamMode)
 	go m.measureBitrate(ctx)
-	outcome, reason := m.startReadLoop(ctx)
-	m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason)
+	outcome, reason, ttfb := m.startReadLoop(ctx, startedAt)
+	m.sink.OnStreamProbe(m.params.ContentID, m.params.Engine.ContainerID, startedAt, m.params.ControlMode, m.params.StreamMode, outcome, reason, ttfb)
 	m.sink.OnStreamEnded(m.params.ContentID)
 	m.sendEngineStop()
 }
@@ -316,7 +316,7 @@ func (m *Manager) requestViaAPI(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) startReadLoop(ctx context.Context) (string, string) {
+func (m *Manager) startReadLoop(ctx context.Context, startedAt time.Time) (string, string, *int) {
 	for {
 		m.mu.Lock()
 		purl := m.playbackURL
@@ -372,20 +372,38 @@ func (m *Manager) startReadLoop(ctx context.Context) (string, string) {
 		case err := <-readerDone:
 			stopKeepalive()
 			readerCancel()
+			// Compute TTFB from reader's recorded first-byte timestamp if available.
+			var ttfbMs *int
+			if fb := r.FirstByteTime(); !fb.IsZero() {
+				v := int(fb.Sub(startedAt).Milliseconds())
+				if v < 0 {
+					v = 0
+				}
+				ttfbMs = &v
+			}
 			if err != nil && ctx.Err() == nil {
 				slog.Warn("upstream reader exited", "stream", m.params.ContentID, "err", err)
-				return classifyProbeOutcome(err)
-			} else {
-				slog.Info("upstream reader finished", "stream", m.params.ContentID)
-				return "success", "reader finished"
+				outcome, reason := classifyProbeOutcome(err)
+				return outcome, reason, ttfbMs
 			}
+			slog.Info("upstream reader finished", "stream", m.params.ContentID)
+			return "success", "reader finished", ttfbMs
 
 		case <-ctx.Done():
 			stopKeepalive()
 			readerCancel()
 			r.Stop()
 			<-readerDone
-			return "success", "context cancelled"
+			// Compute TTFB from reader if available.
+			var ttfbMs *int
+			if fb := r.FirstByteTime(); !fb.IsZero() {
+				v := int(fb.Sub(startedAt).Milliseconds())
+				if v < 0 {
+					v = 0
+				}
+				ttfbMs = &v
+			}
+			return "success", "context cancelled", ttfbMs
 		}
 		readerCancel()
 	}

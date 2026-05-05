@@ -315,7 +315,7 @@ func (s *stateSink) OnStreamPrebuffering(contentID, engineID, engineName, stream
 	s.st.OnStreamPrebuffering(contentID, engineID, engineName, streamMode, controlMode)
 }
 
-func (s *stateSink) OnStreamProbe(contentID, engineID string, startedAt time.Time, controlMode, streamMode, outcome, reason string) {
+func (s *stateSink) OnStreamProbe(contentID, engineID string, startedAt time.Time, controlMode, streamMode, outcome, reason string, ttfbMs *int) {
 	if s.rep == nil {
 		return
 	}
@@ -389,6 +389,7 @@ func (s *stateSink) OnStreamProbe(contentID, engineID string, startedAt time.Tim
 		StartedAt:  startedAt,
 		Outcome:    outcome,
 		DurationMs: &durationMs,
+		TtfbMs:     ttfbMs,
 		PeersMax:   peersMax,
 		BytesDown:  bytesDown,
 		EngineID:   engineID,

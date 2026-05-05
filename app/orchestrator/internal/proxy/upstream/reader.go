@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/acestream/acestream/internal/config"
@@ -31,8 +32,10 @@ type Reader struct {
 	buf       *buffer.RingBuffer
 	mode      string
 
-	client *http.Client
-	stopCh chan struct{}
+	client    *http.Client
+	stopCh    chan struct{}
+	mu        sync.Mutex
+	firstByte time.Time
 }
 
 // New creates a Reader for the given URL/buffer pair.
@@ -56,8 +59,6 @@ func New(contentID, url string, buf *buffer.RingBuffer, mode string) *Reader {
 		},
 	}
 }
-
-
 
 func (r *Reader) Start(ctx context.Context) error {
 	tag := fmt.Sprintf("[upstream:%s]", r.contentID)
@@ -93,8 +94,6 @@ func (r *Reader) Start(ctx context.Context) error {
 			case <-time.After(backoff):
 			}
 		}
-
-
 
 		// Only enforce the init deadline before the first byte has arrived.
 
@@ -188,6 +187,11 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 			written := r.buf.Write(rawBuf[:n])
 			chunkCount += written
 			telemetry.DefaultTelemetry.ObserveIngress(r.mode, int64(n))
+			r.mu.Lock()
+			if r.firstByte.IsZero() {
+				r.firstByte = time.Now().UTC()
+			}
+			r.mu.Unlock()
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
@@ -206,4 +210,11 @@ func (r *Reader) Stop() {
 	default:
 		close(r.stopCh)
 	}
+}
+
+// FirstByteTime returns the time the first byte arrived, or zero time if none.
+func (r *Reader) FirstByteTime() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.firstByte
 }
