@@ -780,11 +780,52 @@ func (s *ProxyServer) mgHandleProtonRefresh(w http.ResponseWriter, r *http.Reque
 	if protonURL == "" {
 		protonURL = "http://localhost:9099"
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, protonURL+"/refresh", r.Body)
+	// Read incoming body (if any) and merge with credentials from settings
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	var incoming map[string]any
+	if r.Body != nil {
+		if data, err := io.ReadAll(r.Body); err == nil && len(data) > 0 {
+			_ = json.Unmarshal(data, &incoming) // ignore errors, we'll default to empty map
+		}
+	}
+	if incoming == nil {
+		incoming = map[string]any{}
+	}
+
+	// If settings are available and credentials source is 'settings', inject them when not provided.
+	if s.settings != nil {
+		vpn := s.settings.Get("vpn_settings")
+		if src, _ := vpn["vpn_servers_proton_credentials_source"].(string); src == "settings" {
+			if u, _ := vpn["vpn_servers_proton_username"].(string); u != "" {
+				if _, ok := incoming["proton_username"]; !ok {
+					incoming["proton_username"] = u
+				}
+			}
+			if p, _ := vpn["vpn_servers_proton_password"].(string); p != "" {
+				if _, ok := incoming["proton_password"]; !ok {
+					incoming["proton_password"] = p
+				}
+			}
+			if s2, _ := vpn["vpn_servers_proton_totp_secret"].(string); s2 != "" {
+				if _, ok := incoming["proton_totp_secret"]; !ok {
+					incoming["proton_totp_secret"] = s2
+				}
+			}
+			if c, _ := vpn["vpn_servers_proton_totp_code"].(string); c != "" {
+				if _, ok := incoming["proton_totp_code"]; !ok {
+					incoming["proton_totp_code"] = c
+				}
+			}
+		}
+	}
+
+	bodyBytes, _ := json.Marshal(incoming)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, protonURL+"/refresh", bytes.NewReader(bodyBytes))
 	if err != nil {
 		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Warn("proton refresh failed", "err", err)
