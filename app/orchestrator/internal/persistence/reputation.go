@@ -851,16 +851,29 @@ func GetTotalProbeCount(ctx context.Context, db *sql.DB) (int, error) {
 }
 
 // GetRecentProbedContentIDs returns content IDs that had at least one successful probe
-// in the last windowHours, ordered by recency, up to limit results.
+// in the last windowHours AND are not globally dead in the last deadWindowHours.
+// A content ID is considered dead if it has probe records in the recent dead window
+// but zero successes on any server during that window.
 func GetRecentProbedContentIDs(ctx context.Context, db *sql.DB, windowHours, limit int) ([]string, error) {
+	// Dead-detection window: 4h. Content IDs probed in this window with no
+	// success anywhere are excluded — they are likely dead streams.
+	const deadWindowHours = 4
+
 	rows, err := db.QueryContext(ctx, `
 		SELECT DISTINCT content_id
 		FROM vpn_probe
 		WHERE outcome='success'
 		  AND started_at >= datetime('now', ? || ' hours')
+		  AND content_id NOT IN (
+		      SELECT content_id
+		      FROM vpn_probe
+		      WHERE started_at >= datetime('now', ? || ' hours')
+		      GROUP BY content_id
+		      HAVING SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) = 0
+		  )
 		ORDER BY started_at DESC
 		LIMIT ?
-	`, fmt.Sprintf("-%d", windowHours), limit)
+	`, fmt.Sprintf("-%d", windowHours), fmt.Sprintf("-%d", deadWindowHours), limit)
 	if err != nil {
 		return nil, err
 	}
