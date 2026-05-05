@@ -181,6 +181,14 @@ type Config struct {
 	ReputationMaxStaleSeconds   int
 	ReputationAutoQuarantineN   int
 	ReputationAutoQuarantineFor time.Duration
+	ReputationExplorationC      float64
+	ReputationPickTopN          int
+
+	// ── VPN Active Probing ───────────────────────────────────────────────────
+	ReputationActiveProbingEnabled    bool
+	ReputationActiveProbeMinIdleCreds int
+	ReputationActiveProbeIntervalSecs int
+	ReputationActiveProbeMaxSecs      int
 
 	// ── Misc ────────────────────────────────────────────────────────────────
 	AutoDelete bool
@@ -586,6 +594,13 @@ func load() *Config {
 		ReputationMaxStaleSeconds:   envInt("REPUTATION_MAX_STALE_SECONDS", 300),
 		ReputationAutoQuarantineN:   envInt("REPUTATION_AUTO_QUARANTINE_N", 5),
 		ReputationAutoQuarantineFor: envDur("REPUTATION_AUTO_QUARANTINE_FOR", 3600*time.Second),
+		ReputationExplorationC:      envFloat("REPUTATION_EXPLORATION_C", 0.3),
+		ReputationPickTopN:          envInt("REPUTATION_PICK_TOP_N", 5),
+
+		ReputationActiveProbingEnabled:    envBool("REPUTATION_ACTIVE_PROBING_ENABLED", false),
+		ReputationActiveProbeMinIdleCreds: envInt("REPUTATION_ACTIVE_PROBE_MIN_IDLE_CREDS", 1),
+		ReputationActiveProbeIntervalSecs: envInt("REPUTATION_ACTIVE_PROBE_INTERVAL_SECS", 300),
+		ReputationActiveProbeMaxSecs:      envInt("REPUTATION_ACTIVE_PROBE_MAX_SECS", 60),
 	}
 }
 

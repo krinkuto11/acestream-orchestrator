@@ -148,9 +148,11 @@ func main() {
 	})
 	repEngine.SetProbeCollector(probeCollector)
 	go probeCollector.Run(appCtx)
-	repEngine.Start(appCtx)
 
 	prov = vpnpkg.NewProvisioner(creds, repEngine)
+	repEngine.SetProvisioner(prov)
+	repEngine.SetProbeEngineSpawner(&probeEngineAdapter{})
+	repEngine.Start(appCtx)
 	svcRefresh = vpnpkg.NewServersRefreshService(serversDir, repEngine)
 	go svcRefresh.Run(appCtx, cfg.VPNServersAutoRefresh, cfg.VPNServersRefreshPeriod)
 
@@ -452,6 +454,26 @@ func normalizeVPNServerSource(provider string) string {
 	default:
 		return "gluetun"
 	}
+}
+
+// probeEngineAdapter implements vpnpkg.ProbeEngineSpawner using the engine package.
+type probeEngineAdapter struct{}
+
+func (a *probeEngineAdapter) SpawnProbeEngine(ctx context.Context, vpnContainer string) (string, int, string, error) {
+	spec, err := cpengine.Scheduler.ScheduleEngineOnVPN(ctx, vpnContainer)
+	if err != nil {
+		return "", 0, "", err
+	}
+	containerID, err := cpengine.ExecuteSpec(ctx, spec)
+	if err != nil {
+		cpengine.ReleaseSpec(spec)
+		return "", 0, "", err
+	}
+	return spec.ContainerName, spec.ContainerAPIPort, containerID, nil
+}
+
+func (a *probeEngineAdapter) StopEngine(ctx context.Context, containerID string) error {
+	return cpengine.StopContainer(ctx, containerID, true)
 }
 
 func setupLogger() {

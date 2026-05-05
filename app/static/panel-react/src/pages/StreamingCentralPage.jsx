@@ -498,21 +498,27 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
         const lx = Math.max(36, Math.min(W - 36, p.x + Math.cos(p.angle) * labelOffset))
         const ly = Math.max(22, Math.min(H - 14, p.y + Math.sin(p.angle) * labelOffset))
         const anchor = p.x < W * 0.33 ? 'start' : p.x > W * 0.67 ? 'end' : 'middle'
+        const isProbing = Boolean(v.active_probe)
         return (
           <g key={v.id}>
             <circle cx={p.x} cy={p.y} r={sunR * 2.2} fill={`url(#${glow})`}/>
-            <circle cx={p.x} cy={p.y} r={sunR} fill="var(--bg-0)" stroke={colorFor(v.state)} strokeWidth="1.5"/>
-            <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize="10" fill={colorFor(v.state)} fontFamily="var(--font-mono)" fontWeight="600">⌬</text>
+            {isProbing && (
+              <circle cx={p.x} cy={p.y} r={sunR + 5} fill="none" stroke="var(--acc-amber)" strokeWidth="1.5" strokeDasharray="3 2">
+                <animateTransform attributeName="transform" type="rotate" from={`0 ${p.x} ${p.y}`} to={`360 ${p.x} ${p.y}`} dur="3s" repeatCount="indefinite"/>
+              </circle>
+            )}
+            <circle cx={p.x} cy={p.y} r={sunR} fill="var(--bg-0)" stroke={isProbing ? 'var(--acc-amber)' : colorFor(v.state)} strokeWidth="1.5"/>
+            <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize="10" fill={isProbing ? 'var(--acc-amber)' : colorFor(v.state)} fontFamily="var(--font-mono)" fontWeight="600">⌬</text>
             <rect
               x={anchor === 'start' ? lx - 2 : anchor === 'end' ? lx - 64 : lx - 32}
               y={ly - 14} width="64" height="22"
-              fill="var(--bg-1)" stroke="var(--line)" opacity="0.92"
+              fill="var(--bg-1)" stroke={isProbing ? 'var(--acc-amber)' : 'var(--line)'} opacity="0.92"
             />
             <text x={lx} y={ly - 3} textAnchor={anchor} fontSize="9" fill="var(--fg-0)" fontFamily="var(--font-mono)" fontWeight="600">
               {v.label.length > 10 ? v.label.slice(0, 10) + '…' : v.label}
             </text>
-            <text x={lx} y={ly + 6} textAnchor={anchor} fontSize="7" fill={colorFor(v.state)} fontFamily="var(--font-mono)" letterSpacing="1">
-              {v.state.toUpperCase()}
+            <text x={lx} y={ly + 6} textAnchor={anchor} fontSize="7" fill={isProbing ? 'var(--acc-amber)' : colorFor(v.state)} fontFamily="var(--font-mono)" letterSpacing="1">
+              {isProbing ? 'PROBING' : v.state.toUpperCase()}
             </text>
           </g>
         )

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -161,12 +163,24 @@ func (cm *CatalogManager) ProviderServers(provider, catalogFile string) []map[st
 
 // ── ReputationEngine ──────────────────────────────────────────────────────────
 
+// ProbeEngineSpawner abstracts engine provisioning for active probes.
+// Implemented outside the vpn package to avoid circular imports with engine.
+type ProbeEngineSpawner interface {
+	// SpawnProbeEngine provisions a probe AceStream engine on the given VPN container.
+	// Returns the container name, API port, container ID, and any error.
+	SpawnProbeEngine(ctx context.Context, vpnContainer string) (containerName string, apiPort int, containerID string, err error)
+	// StopEngine stops and removes the probe engine container.
+	StopEngine(ctx context.Context, containerID string) error
+}
+
 // ReputationEngine is the central coordinator for VPN server reputation.
 // It replaces the old Redis-backed blacklist with a SQLite-backed scoring system.
 type ReputationEngine struct {
 	db      *sql.DB
 	catalog *CatalogManager
 	probes  *ProbeCollector
+	spawner ProbeEngineSpawner
+	prov    *Provisioner
 
 	// serverIDCache maps "source:hostname" → server_id to avoid repeated DB lookups.
 	serverIDMu    sync.Mutex
@@ -185,6 +199,14 @@ func (re *ReputationEngine) SetProbeCollector(pc *ProbeCollector) {
 	re.probes = pc
 }
 
+func (re *ReputationEngine) SetProbeEngineSpawner(s ProbeEngineSpawner) {
+	re.spawner = s
+}
+
+func (re *ReputationEngine) SetProvisioner(p *Provisioner) {
+	re.prov = p
+}
+
 // DB exposes the underlying database for API handlers.
 func (re *ReputationEngine) DB() *sql.DB {
 	return re.db
@@ -192,7 +214,7 @@ func (re *ReputationEngine) DB() *sql.DB {
 
 // Start launches all background jobs. Call with a root context.
 func (re *ReputationEngine) Start(ctx context.Context) {
-	go runReputationJobs(ctx, re.db)
+	go runReputationJobs(ctx, re.db, re)
 }
 
 // ── Server ID resolution ──────────────────────────────────────────────────────
@@ -271,7 +293,8 @@ func (re *ReputationEngine) GetSafeHostname(
 			}
 
 			if len(eligible) > 0 {
-				chosen := pickWithJitter(eligible)
+				eligible = applyExplorationBonus(ctx, re.db, eligible, cfg)
+				chosen := pickWithJitter(eligible, cfg.ReputationPickTopN)
 				slog.Info("Selected VPN hostname by reputation", "hostname", chosen.Hostname, "score", chosen.Score)
 				return chosen.Hostname
 			}
@@ -554,8 +577,34 @@ func (re *ReputationEngine) SyncCatalogToDB(ctx context.Context) error {
 
 // ── Jitter selection ─────────────────────────────────────────────────────────
 
-// pickWithJitter selects from the top candidates with small score jitter to avoid herding.
-func pickWithJitter(candidates []persistence.ScoredServer) persistence.ScoredServer {
+// applyExplorationBonus adds a UCB1 exploration bonus to each candidate,
+// boosting servers with few probes so they compete against well-scored incumbents.
+// After boosting, the slice is re-sorted by effective score descending.
+func applyExplorationBonus(ctx context.Context, db *sql.DB, candidates []persistence.ScoredServer, cfg *config.Config) []persistence.ScoredServer {
+	C := cfg.ReputationExplorationC
+	if C <= 0 {
+		return candidates
+	}
+	totalN, err := persistence.GetTotalProbeCount(ctx, db)
+	if err != nil || totalN == 0 {
+		return candidates
+	}
+	logN := math.Log(float64(totalN + 1))
+	for i := range candidates {
+		bonus := C * math.Sqrt(logN/float64(candidates[i].ProbesN+1))
+		candidates[i].Score += bonus
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Pinned != candidates[j].Pinned {
+			return candidates[i].Pinned
+		}
+		return candidates[i].Score > candidates[j].Score
+	})
+	return candidates
+}
+
+// pickWithJitter selects from the top-topN candidates with small score jitter to avoid herding.
+func pickWithJitter(candidates []persistence.ScoredServer, topN int) persistence.ScoredServer {
 	if len(candidates) == 0 {
 		return persistence.ScoredServer{}
 	}
@@ -567,10 +616,12 @@ func pickWithJitter(candidates []persistence.ScoredServer) persistence.ScoredSer
 		}
 	}
 
-	// Pick from top-3 with random jitter (±0.03).
+	if topN <= 0 {
+		topN = 5
+	}
 	top := candidates
-	if len(top) > 3 {
-		top = top[:3]
+	if len(top) > topN {
+		top = top[:topN]
 	}
 	best := top[0]
 	bestScore := best.Score + (rand.Float64()-0.5)*0.06

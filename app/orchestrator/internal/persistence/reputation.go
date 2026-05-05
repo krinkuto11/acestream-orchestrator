@@ -803,6 +803,7 @@ type ScoredServer struct {
 	Hostname string
 	Score    float64
 	Pinned   bool
+	ProbesN  int
 }
 
 // GetScoredCandidates returns servers eligible for scheduling, sorted by score desc.
@@ -811,7 +812,7 @@ func GetScoredCandidates(ctx context.Context, db *sql.DB, category string, exclu
 		category = "_overall"
 	}
 	rows, err := db.QueryContext(ctx, `
-				SELECT s.id, s.hostname, COALESCE(r.score,0) as score, s.pinned
+				SELECT s.id, s.hostname, COALESCE(r.score,0) as score, s.pinned, COALESCE(r.probes_n,0) as probes_n
 				FROM vpn_server s
 				LEFT JOIN vpn_reputation r ON r.server_id=s.id AND r.category=? AND r.window='24h'
 				WHERE s.status != 'down'
@@ -827,7 +828,7 @@ func GetScoredCandidates(ctx context.Context, db *sql.DB, category string, exclu
 	for rows.Next() {
 		var s ScoredServer
 		var pinned int
-		if err := rows.Scan(&s.ID, &s.Hostname, &s.Score, &pinned); err != nil {
+		if err := rows.Scan(&s.ID, &s.Hostname, &s.Score, &pinned, &s.ProbesN); err != nil {
 			continue
 		}
 		s.Pinned = pinned == 1
@@ -835,6 +836,42 @@ func GetScoredCandidates(ctx context.Context, db *sql.DB, category string, exclu
 			continue
 		}
 		out = append(out, s)
+	}
+	return out, nil
+}
+
+// GetTotalProbeCount returns the sum of probes_n across all _overall reputation rows.
+// Used as the N term in the UCB1 exploration bonus formula.
+func GetTotalProbeCount(ctx context.Context, db *sql.DB) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(probes_n),0) FROM vpn_reputation WHERE category='_overall'`,
+	).Scan(&n)
+	return n, err
+}
+
+// GetRecentProbedContentIDs returns content IDs that had at least one successful probe
+// in the last windowHours, ordered by recency, up to limit results.
+func GetRecentProbedContentIDs(ctx context.Context, db *sql.DB, windowHours, limit int) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT content_id
+		FROM vpn_probe
+		WHERE outcome='success'
+		  AND started_at >= datetime('now', ? || ' hours')
+		ORDER BY started_at DESC
+		LIMIT ?
+	`, fmt.Sprintf("-%d", windowHours), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		out = append(out, id)
 	}
 	return out, nil
 }

@@ -47,6 +47,7 @@ type Engine struct {
 	MemoryUsage        int64      `json:"memory_usage"`
 	MemoryPercent      float64    `json:"memory_percent"`
 	Streams            []string   `json:"streams"`
+	ProbeOnly          bool       `json:"probe_only,omitempty"`
 }
 
 type VPNNode struct {
@@ -73,6 +74,16 @@ type VPNNode struct {
 	// ControlHost is the resolved IP address of the container's Gluetun API.
 	// It is preferred over ContainerName for cross-Docker-network connectivity.
 	ControlHost string `json:"control_host,omitempty"`
+
+	// ActiveProbe is set while this node is running an active reputation probe.
+	ActiveProbe *ActiveProbeInfo `json:"active_probe,omitempty"`
+}
+
+// ActiveProbeInfo describes an in-progress active reputation probe on a VPN node.
+type ActiveProbeInfo struct {
+	ContentID  string    `json:"content_id"`
+	StartedAt  time.Time `json:"started_at"`
+	TargetHost string    `json:"target_host"`
 }
 
 // EngineSpec is the complete, immutable plan for a new engine.

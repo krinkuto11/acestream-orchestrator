@@ -68,24 +68,49 @@ function Empty({ children }) {
 }
 
 function NodeRow({ node }) {
+  const isProbing = Boolean(node.active_probe)
   const healthy = node.healthy || node.lifecycle === 'running'
-  const color = healthy ? 'var(--acc-green)' : 'var(--acc-amber)'
+  const color = isProbing ? 'var(--acc-amber)' : healthy ? 'var(--acc-green)' : 'var(--acc-amber)'
 
   return (
     <div style={{ padding: '4px 12px', borderBottom: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 8 }}>
       <span className="dot" style={{ color, fontSize: 8 }}/>
       <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 11, color: 'var(--fg-1)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {node.container_name || node.id}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 11, color: 'var(--fg-1)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {node.container_name || node.id}
+          </span>
+          {isProbing && (
+            <span style={{
+              fontSize: 7,
+              fontFamily: 'var(--font-mono)',
+              letterSpacing: '0.06em',
+              color: 'var(--acc-amber)',
+              border: '1px solid var(--acc-amber)',
+              padding: '0 3px',
+              borderRadius: 2,
+              flexShrink: 0,
+              animation: 'pulse 1.4s ease-in-out infinite',
+            }}>PROBING</span>
+          )}
         </div>
-        {node.assigned_hostname && (
+        {isProbing && node.active_probe.target_host ? (
+          <div style={{ fontSize: 9, color: 'var(--acc-amber)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>
+            {node.active_probe.target_host}
+          </div>
+        ) : node.assigned_hostname ? (
           <div style={{ fontSize: 9, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {node.assigned_hostname}
+          </div>
+        ) : null}
+        {isProbing && node.active_probe.content_id && (
+          <div style={{ fontSize: 8, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {node.active_probe.content_id.slice(0, 20)}…
           </div>
         )}
       </div>
       <span style={{ fontSize: 9, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>
-        {relTime(node.first_seen)}
+        {isProbing ? relTime(node.active_probe.started_at) : relTime(node.first_seen)}
       </span>
     </div>
   )

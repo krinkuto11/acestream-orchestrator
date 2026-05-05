@@ -136,6 +136,62 @@ func (rs *ResourceScheduler) ScheduleNewEngine(ctx context.Context) (*state.Engi
 	return spec, nil
 }
 
+// ScheduleEngineOnVPN is like ScheduleNewEngine but pins the engine to a
+// specific VPN container. Used by the active probe job.
+func (rs *ResourceScheduler) ScheduleEngineOnVPN(ctx context.Context, vpnContainer string) (*state.EngineSpec, error) {
+	cfg := config.C.Load()
+	st := state.Global
+
+	image := resolveEngineImage()
+	memLimit := cfg.EngineMemoryLimit
+	variantName := fmt.Sprintf("global-%s", detectPlatform())
+
+	st.IncrVPNPending(vpnContainer)
+
+	ports, err := Alloc.AllocateEnginePorts(true, vpnContainer, 0, 0, 0, 0, cfg.ACEMapHTTPS)
+	if err != nil {
+		st.DecrVPNPending(vpnContainer)
+		return nil, fmt.Errorf("port allocation failed: %w", err)
+	}
+
+	containerName := generateContainerName("acestream-probe")
+	labelKey := cfg.ContainerLabelKey
+	labelVal := cfg.ContainerLabelVal
+	configHash := ComputeConfigHash()
+
+	labels := map[string]string{
+		labelKey:                      labelVal,
+		"acestream.http_port":         strconv.Itoa(ports.ContainerHTTPPort),
+		"acestream.https_port":        strconv.Itoa(ports.ContainerHTTPSPort),
+		"acestream.api_port":          strconv.Itoa(ports.ContainerAPIPort),
+		"host.http_port":              strconv.Itoa(ports.HostHTTPPort),
+		"host.api_port":               strconv.Itoa(ports.HostAPIPort),
+		"acestream.engine_variant":    variantName,
+		"acestream.config_hash":       configHash,
+		"acestream.config_generation": "1",
+		"acestream.vpn_container":     vpnContainer,
+		"acestream.probe_engine":      "true",
+	}
+
+	networkMode := fmt.Sprintf("container:%s", vpnContainer)
+	cmd := buildCommand(ports.ContainerHTTPPort, ports.ContainerAPIPort, 0, cfg)
+
+	spec := &state.EngineSpec{
+		ContainerName:     containerName,
+		Image:             image,
+		Command:           cmd,
+		Labels:            labels,
+		NetworkMode:       networkMode,
+		MemLimit:          memLimit,
+		VPNContainerID:    vpnContainer,
+		HostHTTPPort:      ports.HostHTTPPort,
+		ContainerHTTPPort: ports.ContainerHTTPPort,
+		HostAPIPort:       ports.HostAPIPort,
+		ContainerAPIPort:  ports.ContainerAPIPort,
+	}
+	return spec, nil
+}
+
 // ReleaseSpec frees all resources reserved by a spec (called on failure).
 func ReleaseSpec(spec *state.EngineSpec) {
 	if spec == nil {
