@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/acestream/acestream/internal/controlplane/circuitbreaker"
 	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/controlplane/circuitbreaker"
 	"github.com/acestream/acestream/internal/metrics"
 	"github.com/acestream/acestream/internal/state"
 )
@@ -25,10 +25,10 @@ const (
 )
 
 type intent struct {
-	id      string
-	action  intentAction
-	spec    *state.EngineSpec // non-nil for create
-	contID  string            // non-nil for terminate
+	id     string
+	action intentAction
+	spec   *state.EngineSpec // non-nil for create
+	contID string            // non-nil for terminate
 }
 
 // Controller is the Go equivalent of Python's EngineController.
@@ -60,7 +60,7 @@ func (c *Controller) Start(ctx context.Context) {
 		return
 	}
 	slog.Info("EngineController started")
-	
+
 	numWorkers := 10 // Worker pool size
 	c.wg.Add(1 + numWorkers)
 	go c.reconcilerLoop(ctx)
@@ -355,9 +355,9 @@ func (c *Controller) doReconcile(ctx context.Context) {
 				for i := 0; i < createCount; i++ {
 					id := c.nextIntentID()
 					st.AddIntent(&state.ScalingIntent{
-						ID:     id,
-						Action: "create",
-						Status: "scheduling",
+						ID:      id,
+						Action:  "create",
+						Status:  "scheduling",
 						Details: map[string]any{},
 					})
 					go func(intentID string) {
@@ -500,7 +500,7 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 	}
 
 	requiredNodes := int(math.Ceil(float64(desired) / float64(maxPerVPN)))
-	
+
 	// The ideal limit if all required nodes were present.
 	idealLimit := int(math.Ceil(float64(desired) / float64(max(1, requiredNodes))))
 	if idealLimit > maxPerVPN {
@@ -902,4 +902,3 @@ func min12(n int) int {
 	}
 	return 12
 }
-

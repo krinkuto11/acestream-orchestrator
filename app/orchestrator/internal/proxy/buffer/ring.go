@@ -23,9 +23,9 @@ const (
 // ─── PCR bitrate constants ────────────────────────────────────────────────────
 
 const (
-	pcrWindowSize = 8              // circular sample window for bitrate regression
+	pcrWindowSize = 8                 // circular sample window for bitrate regression
 	pcrClockRate  = int64(27_000_000) // 27 MHz PCR clock
-	pcrMaxTicks   = int64(1) << 42 // full 42-bit PCR wrap (~4.67 days at 27 MHz)
+	pcrMaxTicks   = int64(1) << 42    // full 42-bit PCR wrap (~4.67 days at 27 MHz)
 	pcrHalfTicks  = pcrMaxTicks >> 1
 
 	// Sanity bounds: below 10 KB/s or above 500 MB/s → discard sample.
@@ -67,17 +67,17 @@ type Chunk struct {
 // Producers call Write; consumers call ReadAfter / WriteAfterTo.
 // All methods are goroutine-safe.
 type RingBuffer struct {
-	mu        sync.RWMutex
-	slots     [][]byte  // circular chunk storage
-	seq       []int64   // global sequence index per slot
-	head      int64     // index of next slot to write (monotonically increasing)
-	cap       int       // len(slots), always power of two
-	mask      int       // cap-1 for fast modulo
+	mu         sync.RWMutex
+	slots      [][]byte // circular chunk storage
+	seq        []int64  // global sequence index per slot
+	head       int64    // index of next slot to write (monotonically increasing)
+	cap        int      // len(slots), always power of two
+	mask       int      // cap-1 for fast modulo
 	targetSize int      // bytes per chunk (188-byte aligned)
-	partial   []byte    // leftover bytes < 188 between calls
-	notify    chan struct{}
-	notifyMu  sync.Mutex
-	stopped   bool
+	partial    []byte   // leftover bytes < 188 between calls
+	notify     chan struct{}
+	notifyMu   sync.Mutex
+	stopped    bool
 
 	// Freshness
 	lastWriteTime time.Time
@@ -148,7 +148,7 @@ func (rb *RingBuffer) Write(data []byte) int {
 		rb.mu.Unlock()
 		return 0
 	}
-	
+
 	aligned := combined
 
 	// Track the last stored chunk for PCR scanning (done outside the lock).
@@ -160,7 +160,7 @@ func (rb *RingBuffer) Write(data []byte) int {
 		chunk := make([]byte, rb.targetSize)
 		copy(chunk, aligned[:rb.targetSize])
 		aligned = aligned[rb.targetSize:]
-		rb.storeChunk(chunk)           // increments rb.pcrTotalBytes
+		rb.storeChunk(chunk) // increments rb.pcrTotalBytes
 		lastChunk = chunk
 		lastChunkBytes = rb.pcrTotalBytes
 		written++

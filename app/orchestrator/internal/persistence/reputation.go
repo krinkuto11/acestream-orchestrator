@@ -331,7 +331,7 @@ func serverListStats(ctx context.Context, db *sql.DB, cat string, usedOnly bool)
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.source, s.status, COALESCE(r.score_color,'red') as color, count(*) as n
 		FROM vpn_server s
-		LEFT JOIN vpn_reputation r ON r.server_id=s.id AND r.category=? AND r.window='30d'
+		LEFT JOIN vpn_reputation r ON r.server_id=s.id AND r.category=? AND r.window='24h'
 		`+usedClause+`
 		GROUP BY s.source, s.status, color
 	`, cat)
@@ -465,9 +465,9 @@ func UpsertReputation(ctx context.Context, db *sql.DB, r VPNReputationRow) error
 	return err
 }
 
-// RefreshReputation recomputes reputation for (serverID, category, window='30d') from raw probes.
+// RefreshReputation recomputes reputation for (serverID, category, window='24h') from raw probes.
 func RefreshReputation(ctx context.Context, db *sql.DB, serverID, category string, cfg ReputationConfig) (*VPNReputationRow, error) {
-	since := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	since := time.Now().UTC().Add(-24 * time.Hour)
 
 	catFilter := ""
 	args := []any{serverID, since.Format(time.RFC3339)}
@@ -477,7 +477,7 @@ func RefreshReputation(ctx context.Context, db *sql.DB, serverID, category strin
 	}
 
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT outcome, ttfb_ms, duration_ms
+		SELECT content_id, outcome, ttfb_ms, duration_ms
 		FROM vpn_probe
 		WHERE server_id=? AND started_at>=? %s
 		ORDER BY started_at DESC
@@ -487,29 +487,91 @@ func RefreshReputation(ctx context.Context, db *sql.DB, serverID, category strin
 	}
 	defer rows.Close()
 
+	// Collect probe rows and track failed content IDs so we can check whether
+	// those content IDs had successes on other servers. If a content ID had no
+	// successes anywhere else in the window, we treat failures for it as global
+	// (dead content) and do not penalize individual servers for them.
+	type probeRow struct {
+		contentID string
+		outcome   string
+		ttfb      sql.NullInt64
+		dur       sql.NullInt64
+	}
+	var probeRows []probeRow
+	var failedContentIDsMap = make(map[string]struct{})
+	for rows.Next() {
+		var pr probeRow
+		if err := rows.Scan(&pr.contentID, &pr.outcome, &pr.ttfb, &pr.dur); err != nil {
+			continue
+		}
+		probeRows = append(probeRows, pr)
+		if pr.outcome != "success" {
+			failedContentIDsMap[pr.contentID] = struct{}{}
+		}
+	}
+
+	// If there are failed content IDs, query whether any of them had successes
+	// on other servers within the same window. Build a set of content IDs that
+	// did see success elsewhere.
+	var failedContentIDs []string
+	for id := range failedContentIDsMap {
+		failedContentIDs = append(failedContentIDs, id)
+	}
+	otherSuccessSet := make(map[string]struct{})
+	if len(failedContentIDs) > 0 {
+		// Build IN clause placeholders.
+		placeholders := strings.Repeat("?,", len(failedContentIDs))
+		placeholders = strings.TrimSuffix(placeholders, ",")
+		qargs := make([]any, 0, len(failedContentIDs)+2)
+		for _, id := range failedContentIDs {
+			qargs = append(qargs, id)
+		}
+		// since and exclude current server to focus on other nodes' successes.
+		qargs = append(qargs, since.Format(time.RFC3339), serverID)
+		q := fmt.Sprintf(`
+			SELECT DISTINCT content_id FROM vpn_probe
+			WHERE content_id IN (%s) AND outcome='success' AND started_at>=? AND server_id!=?
+		`, placeholders)
+		osRows, oerr := db.QueryContext(ctx, q, qargs...)
+		if oerr == nil {
+			defer osRows.Close()
+			for osRows.Next() {
+				var cid string
+				if err := osRows.Scan(&cid); err == nil {
+					otherSuccessSet[cid] = struct{}{}
+				}
+			}
+		}
+	}
+
 	var outcomes []string
 	var ttfbs []int
 	var durations []int
 	var drops int
 	var successes int
 
-	for rows.Next() {
-		var outcome string
-		var ttfb, dur sql.NullInt64
-		if err := rows.Scan(&outcome, &ttfb, &dur); err != nil {
-			continue
+	// Now compute counts, excluding failures for content IDs with no other
+	// successes (global failures).
+	for _, pr := range probeRows {
+		// If not a success and there was no success on other servers for this
+		// content ID, skip counting it as it likely indicates dead content.
+		if pr.outcome != "success" {
+			if _, ok := otherSuccessSet[pr.contentID]; !ok {
+				// skip global failure
+				continue
+			}
 		}
-		outcomes = append(outcomes, outcome)
-		if outcome == "success" {
+		outcomes = append(outcomes, pr.outcome)
+		if pr.outcome == "success" {
 			successes++
-			if ttfb.Valid {
-				ttfbs = append(ttfbs, int(ttfb.Int64))
+			if pr.ttfb.Valid {
+				ttfbs = append(ttfbs, int(pr.ttfb.Int64))
 			}
-			if dur.Valid {
-				durations = append(durations, int(dur.Int64))
+			if pr.dur.Valid {
+				durations = append(durations, int(pr.dur.Int64))
 			}
 		}
-		if outcome == "dropped" {
+		if pr.outcome == "dropped" {
 			drops++
 		}
 	}
@@ -518,7 +580,7 @@ func RefreshReputation(ctx context.Context, db *sql.DB, serverID, category strin
 	rep := &VPNReputationRow{
 		ServerID:  serverID,
 		Category:  category,
-		Window:    "30d",
+		Window:    "24h",
 		ProbesN:   n,
 		DropsN:    drops,
 		UpdatedAt: time.Now().UTC(),
@@ -554,7 +616,7 @@ func RefreshReputation(ctx context.Context, db *sql.DB, serverID, category strin
 	rep.LowConfidence = lowConf
 
 	// Preserve existing history_30.
-	existing, _ := GetReputation(ctx, db, serverID, category, "30d")
+	existing, _ := GetReputation(ctx, db, serverID, category, "24h")
 	if existing != nil {
 		rep.History30 = existing.History30
 	}
@@ -566,7 +628,7 @@ func RefreshReputation(ctx context.Context, db *sql.DB, serverID, category strin
 func SnapshotHistory(ctx context.Context, db *sql.DB) error {
 	rows, err := db.QueryContext(ctx, `
 		SELECT server_id, category, window, score, history_30
-		FROM vpn_reputation WHERE window='30d'
+		FROM vpn_reputation WHERE window='24h'
 	`)
 	if err != nil {
 		return err
@@ -597,7 +659,7 @@ func SnapshotHistory(ctx context.Context, db *sql.DB) error {
 		}
 		h30JSON, _ := json.Marshal(hist)
 		_, _ = db.ExecContext(ctx, `
-			UPDATE vpn_reputation SET history_30=? WHERE server_id=? AND category=? AND window='30d'
+			UPDATE vpn_reputation SET history_30=? WHERE server_id=? AND category=? AND window='24h'
 		`, string(h30JSON), e.serverID, e.category)
 	}
 	return nil
@@ -627,7 +689,7 @@ func GetServerDetail(ctx context.Context, db *sql.DB, serverID string) (*ServerD
 	if err != nil {
 		return nil, err
 	}
-	rep, _ := GetReputation(ctx, db, serverID, "_overall", "30d")
+	rep, _ := GetReputation(ctx, db, serverID, "_overall", "24h")
 
 	detail := &ServerDetail{
 		Server: VPNServerWithRep{VPNServerRow: *srv, Rep: rep},
@@ -637,7 +699,7 @@ func GetServerDetail(ctx context.Context, db *sql.DB, serverID string) (*ServerD
 	catRows, err := db.QueryContext(ctx, `
 		SELECT category, score, score_color, probes_n, success_rate, ttfb_p50_ms
 		FROM vpn_reputation
-		WHERE server_id=? AND window='30d' AND category != '_overall'
+		WHERE server_id=? AND window='24h' AND category != '_overall'
 		ORDER BY probes_n DESC
 	`, serverID)
 	if err == nil {
@@ -749,13 +811,13 @@ func GetScoredCandidates(ctx context.Context, db *sql.DB, category string, exclu
 		category = "_overall"
 	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT s.id, s.hostname, COALESCE(r.score,0) as score, s.pinned
-		FROM vpn_server s
-		LEFT JOIN vpn_reputation r ON r.server_id=s.id AND r.category=? AND r.window='30d'
-		WHERE s.status != 'down'
-		  AND (s.quarantined_until IS NULL OR s.quarantined_until <= datetime('now'))
-		ORDER BY s.pinned DESC, score DESC
-	`, category)
+				SELECT s.id, s.hostname, COALESCE(r.score,0) as score, s.pinned
+				FROM vpn_server s
+				LEFT JOIN vpn_reputation r ON r.server_id=s.id AND r.category=? AND r.window='24h'
+				WHERE s.status != 'down'
+					AND (s.quarantined_until IS NULL OR s.quarantined_until <= datetime('now'))
+				ORDER BY s.pinned DESC, score DESC
+		`, category)
 	if err != nil {
 		return nil, err
 	}

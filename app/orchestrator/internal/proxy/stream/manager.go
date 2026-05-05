@@ -325,7 +325,7 @@ func (m *Manager) startReadLoop(ctx context.Context, startedAt time.Time) (strin
 
 		if purl == "" {
 			slog.Error("no playback URL, cannot start read loop", "stream", m.params.ContentID)
-			return "engine_error", "missing playback url"
+			return "engine_error", "missing playback url", nil
 		}
 
 		m.buf.Reset()
@@ -366,7 +366,7 @@ func (m *Manager) startReadLoop(ctx context.Context, startedAt time.Time) (strin
 			if err := m.requestStream(ctx); err != nil {
 				slog.Error("engine request failed after swap", "stream", m.params.ContentID, "err", err)
 				outcome, reason := classifyProbeOutcome(err)
-				return outcome, reason
+				return outcome, reason, nil
 			}
 
 		case err := <-readerDone:

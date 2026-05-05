@@ -1696,9 +1696,9 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 									"schema": map[string]any{
 										"type": "object",
 										"example": map[string]any{
-											"cpu_percent_avg": 15.2,
+											"cpu_percent_avg":    15.2,
 											"memory_usage_total": 1024000000,
-											"engine_count": 10,
+											"engine_count":       10,
 										},
 									},
 								},
@@ -1757,7 +1757,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 									"schema": map[string]any{
 										"type": "object",
 										"example": map[string]any{
-											"cpu_percent": 12.5,
+											"cpu_percent":  12.5,
 											"memory_usage": 256000000,
 										},
 									},
@@ -1781,8 +1781,8 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"type": "array",
-										"items": map[string]string{"type": "string"},
+										"type":    "array",
+										"items":   map[string]string{"type": "string"},
 										"example": []string{"[INFO] Starting AceStream engine...", "[INFO] Listening on port 8621"},
 									},
 								},
@@ -1865,8 +1865,8 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 											"type": "object",
 											"example": map[string]any{
 												"timestamp": 1625232000,
-												"bitrate": 4500000,
-												"peers": 120,
+												"bitrate":   4500000,
+												"peers":     120,
 											},
 										},
 									},
@@ -1907,7 +1907,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 									"schema": map[string]any{
 										"type": "object",
 										"example": map[string]any{
-											"connected": true,
+											"connected":    true,
 											"active_nodes": 2,
 										},
 									},
@@ -1927,7 +1927,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"type": "object",
+										"type":    "object",
 										"example": map[string]string{"ip": "1.2.3.4"},
 									},
 								},
@@ -1950,7 +1950,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 										"type": "object",
 										"example": map[string]any{
 											"engine_settings": map[string]any{"buffer": 30},
-											"orchestrator": map[string]any{"min_replicas": 5},
+											"orchestrator":    map[string]any{"min_replicas": 5},
 										},
 									},
 								},
@@ -1987,7 +1987,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"type": "object",
+										"type":    "object",
 										"example": map[string]any{"buffer": 30, "memory_mode": true},
 									},
 								},
@@ -2047,9 +2047,9 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 										"items": map[string]any{
 											"type": "object",
 											"example": map[string]any{
-												"timestamp": "2026-05-02T12:00:00Z",
+												"timestamp":  "2026-05-02T12:00:00Z",
 												"event_type": "engine_started",
-												"message": "Engine ace-engine-1 started successfully",
+												"message":    "Engine ace-engine-1 started successfully",
 											},
 										},
 									},
@@ -2072,7 +2072,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 										"type": "object",
 										"example": map[string]any{
 											"total_events": 150,
-											"errors": 2,
+											"errors":       2,
 										},
 									},
 								},
@@ -2093,9 +2093,9 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 									"schema": map[string]any{
 										"type": "object",
 										"example": map[string]any{
-											"hits": 1200,
+											"hits":   1200,
 											"misses": 45,
-											"ratio": 0.96,
+											"ratio":  0.96,
 										},
 									},
 								},
@@ -2148,7 +2148,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"type": "object",
+										"type":    "object",
 										"example": map[string]string{"state": "closed"},
 									},
 								},
@@ -2169,8 +2169,8 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 									"schema": map[string]any{
 										"type": "object",
 										"example": map[string]string{
-											"version": "1.2.4",
-											"commit": "8f3e2b1",
+											"version":    "1.2.4",
+											"commit":     "8f3e2b1",
 											"build_time": "2026-05-01T10:00:00Z",
 										},
 									},

@@ -11,13 +11,13 @@ import (
 // GlobalCache provides a thread-safe, size-bounded LRU cache for HLS segments.
 // It enforces both a strict memory limit (evicting oldest on overflow) and TTL.
 type GlobalCache struct {
-	mu          sync.Mutex
-	maxBytes    int64
-	totalBytes  int64
-	entries     map[string]*list.Element
-	evictList   *list.List
-	stopCh      chan struct{}
-	once        sync.Once
+	mu         sync.Mutex
+	maxBytes   int64
+	totalBytes int64
+	entries    map[string]*list.Element
+	evictList  *list.List
+	stopCh     chan struct{}
+	once       sync.Once
 }
 
 type cacheEntry struct {
@@ -41,10 +41,10 @@ func init() {
 // NewGlobalCache creates a new cache with the specified byte limit.
 func NewGlobalCache(maxBytes int64) *GlobalCache {
 	gc := &GlobalCache{
-		maxBytes:   maxBytes,
-		entries:    make(map[string]*list.Element),
-		evictList:  list.New(),
-		stopCh:     make(chan struct{}),
+		maxBytes:  maxBytes,
+		entries:   make(map[string]*list.Element),
+		evictList: list.New(),
+		stopCh:    make(chan struct{}),
 	}
 	go gc.gcLoop()
 	return gc

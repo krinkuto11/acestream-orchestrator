@@ -48,7 +48,8 @@ func FindPCR(pkt []byte) PCRResult {
 // last PCR value found, its PID, and whether any PCR was found.
 //
 // The full 42-bit PCR value is returned in 27 MHz ticks:
-//   ticks = base×300 + extension
+//
+//	ticks = base×300 + extension
 //
 // Scanning to the end of the block (rather than stopping at the first hit)
 // gives the most recent timestamp, which makes the bitrate measurement more
@@ -87,4 +88,3 @@ func ScanForLastPCR(data []byte) (ticks int64, pid uint16, found bool) {
 	}
 	return
 }
-

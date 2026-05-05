@@ -16,8 +16,8 @@ const settingsRowID = 1
 // SettingsStore persists the five settings categories to SQLite and serves
 // reads from a hot in-memory cache.
 type SettingsStore struct {
-	db  *sql.DB
-	mu  sync.RWMutex
+	db *sql.DB
+	mu sync.RWMutex
 	// cached categories (never nil after first load)
 	cache map[string]map[string]any
 }
@@ -214,11 +214,11 @@ func (s *SettingsStore) ensureRow() error {
 	}
 	// Simpler: insert the full row at once.
 	var (
-		ec, _ = json.Marshal(defaults["engine_config"])
-		es, _ = json.Marshal(defaults["engine_settings"])
+		ec, _  = json.Marshal(defaults["engine_config"])
+		es, _  = json.Marshal(defaults["engine_settings"])
 		os_, _ = json.Marshal(defaults["orchestrator_settings"])
-		ps, _ = json.Marshal(defaults["proxy_settings"])
-		vs, _ = json.Marshal(defaults["vpn_settings"])
+		ps, _  = json.Marshal(defaults["proxy_settings"])
+		vs, _  = json.Marshal(defaults["vpn_settings"])
 	)
 	_, err := s.db.Exec(
 		`INSERT OR IGNORE INTO runtime_settings(id, engine_config, engine_settings, orchestrator_settings, proxy_settings, vpn_settings, updated_at) VALUES(?,?,?,?,?,?,?)`,
@@ -241,11 +241,11 @@ func (s *SettingsStore) loadCache() error {
 	s.cache = make(map[string]map[string]any, 5)
 
 	for cat, blob := range map[string]string{
-		"engine_config":        ec,
-		"engine_settings":      es,
+		"engine_config":         ec,
+		"engine_settings":       es,
 		"orchestrator_settings": os_,
-		"proxy_settings":       ps,
-		"vpn_settings":         vs,
+		"proxy_settings":        ps,
+		"vpn_settings":          vs,
 	} {
 		m := deepCopyMap(defaults[cat])
 		if blob != "" && blob != "{}" {
@@ -294,28 +294,28 @@ func categoryColumn(category string) string {
 
 func defaultCategories() map[string]map[string]any {
 	return map[string]map[string]any{
-		"engine_config":        defaultEngineConfig(),
-		"engine_settings":      defaultEngineSettings(),
+		"engine_config":         defaultEngineConfig(),
+		"engine_settings":       defaultEngineSettings(),
 		"orchestrator_settings": defaultOrchestratorSettings(),
-		"proxy_settings":       defaultProxySettings(),
-		"vpn_settings":         defaultVPNSettings(),
+		"proxy_settings":        defaultProxySettings(),
+		"vpn_settings":          defaultVPNSettings(),
 	}
 }
 
 func defaultEngineConfig() map[string]any {
 	return map[string]any{
-		"total_max_download_rate":        0,
-		"total_max_upload_rate":          0,
-		"live_cache_type":                "memory",
-		"buffer_time":                    30,
-		"memory_limit":                   nil,
-		"parameters":                     []any{},
-		"torrent_folder_mount_enabled":   false,
-		"torrent_folder_host_path":       nil,
-		"torrent_folder_container_path":  nil,
-		"disk_cache_mount_enabled":       false,
-		"disk_cache_prune_enabled":       false,
-		"disk_cache_prune_interval":      1440,
+		"total_max_download_rate":       0,
+		"total_max_upload_rate":         0,
+		"live_cache_type":               "memory",
+		"buffer_time":                   30,
+		"memory_limit":                  nil,
+		"parameters":                    []any{},
+		"torrent_folder_mount_enabled":  false,
+		"torrent_folder_host_path":      nil,
+		"torrent_folder_container_path": nil,
+		"disk_cache_mount_enabled":      false,
+		"disk_cache_prune_enabled":      false,
+		"disk_cache_prune_interval":     1440,
 	}
 }
 
@@ -352,67 +352,67 @@ func defaultOrchestratorSettings() map[string]any {
 
 func defaultProxySettings() map[string]any {
 	return map[string]any{
-		"initial_data_wait_timeout":  10,
+		"initial_data_wait_timeout":   10,
 		"initial_data_check_interval": 0.2,
-		"no_data_timeout_checks":     60,
-		"no_data_check_interval":     1.0,
-		"connection_timeout":         30,
-		"upstream_connect_timeout":   3,
-		"upstream_read_timeout":      90,
-		"stream_timeout":             60,
-		"channel_shutdown_delay":     5,
-		"proxy_prebuffer_seconds":    3,
-		"pacing_bitrate_multiplier":  1.5,
-		"max_streams_per_engine":     2,
-		"stream_mode":                "TS",
-		"control_mode":               "api",
-		"legacy_api_preflight_tier":  "light",
-		"ace_live_edge_delay":        0,
-		"hls_max_segments":           20,
-		"hls_initial_segments":       3,
-		"hls_window_size":            6,
-		"hls_buffer_ready_timeout":   30,
-		"hls_first_segment_timeout":  30,
-		"hls_initial_buffer_seconds": 10,
-		"hls_max_initial_segments":   10,
-		"hls_segment_fetch_interval": 0.5,
+		"no_data_timeout_checks":      60,
+		"no_data_check_interval":      1.0,
+		"connection_timeout":          30,
+		"upstream_connect_timeout":    3,
+		"upstream_read_timeout":       90,
+		"stream_timeout":              60,
+		"channel_shutdown_delay":      5,
+		"proxy_prebuffer_seconds":     3,
+		"pacing_bitrate_multiplier":   1.5,
+		"max_streams_per_engine":      2,
+		"stream_mode":                 "TS",
+		"control_mode":                "api",
+		"legacy_api_preflight_tier":   "light",
+		"ace_live_edge_delay":         0,
+		"hls_max_segments":            20,
+		"hls_initial_segments":        3,
+		"hls_window_size":             6,
+		"hls_buffer_ready_timeout":    30,
+		"hls_first_segment_timeout":   30,
+		"hls_initial_buffer_seconds":  10,
+		"hls_max_initial_segments":    10,
+		"hls_segment_fetch_interval":  0.5,
 	}
 }
 
 func defaultVPNSettings() map[string]any {
 	return map[string]any{
-		"enabled":                    false,
-		"dynamic_vpn_management":     true,
-		"preferred_engines_per_vpn":  10,
-		"protocol":                   "wireguard",
-		"provider":                   "protonvpn",
-		"regions":                    []any{},
-		"api_port":                   8001,
-		"health_check_interval_s":    5,
-		"port_cache_ttl_s":           60,
-		"restart_engines_on_reconnect": true,
-		"unhealthy_restart_timeout_s": 60,
-		"vpn_servers_auto_refresh":   false,
-		"vpn_servers_refresh_period_s": 86400,
-		"vpn_servers_refresh_source": "gluetun_official",
-		"vpn_servers_gluetun_json_mode": "update",
-		"vpn_servers_storage_path":   nil,
-		"vpn_servers_official_url":   "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
+		"enabled":                               false,
+		"dynamic_vpn_management":                true,
+		"preferred_engines_per_vpn":             10,
+		"protocol":                              "wireguard",
+		"provider":                              "protonvpn",
+		"regions":                               []any{},
+		"api_port":                              8001,
+		"health_check_interval_s":               5,
+		"port_cache_ttl_s":                      60,
+		"restart_engines_on_reconnect":          true,
+		"unhealthy_restart_timeout_s":           60,
+		"vpn_servers_auto_refresh":              false,
+		"vpn_servers_refresh_period_s":          86400,
+		"vpn_servers_refresh_source":            "gluetun_official",
+		"vpn_servers_gluetun_json_mode":         "update",
+		"vpn_servers_storage_path":              nil,
+		"vpn_servers_official_url":              "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
 		"vpn_servers_proton_credentials_source": "env",
-		"vpn_servers_proton_username_env":  "PROTON_USERNAME",
-		"vpn_servers_proton_password_env":  "PROTON_PASSWORD",
-		"vpn_servers_proton_totp_code_env": "PROTON_TOTP_CODE",
-		"vpn_servers_proton_totp_secret_env": "PROTON_TOTP_SECRET",
-		"vpn_servers_proton_username":    nil,
-		"vpn_servers_proton_password":    nil,
-		"vpn_servers_proton_totp_code":   nil,
-		"vpn_servers_proton_totp_secret": nil,
-		"vpn_servers_filter_ipv6":        "exclude",
-		"vpn_servers_filter_secure_core": "include",
-		"vpn_servers_filter_tor":         "include",
-		"vpn_servers_filter_free_tier":   "include",
-		"credentials":                    []any{},
-		"wireguard_mtu":                  0,
+		"vpn_servers_proton_username_env":       "PROTON_USERNAME",
+		"vpn_servers_proton_password_env":       "PROTON_PASSWORD",
+		"vpn_servers_proton_totp_code_env":      "PROTON_TOTP_CODE",
+		"vpn_servers_proton_totp_secret_env":    "PROTON_TOTP_SECRET",
+		"vpn_servers_proton_username":           nil,
+		"vpn_servers_proton_password":           nil,
+		"vpn_servers_proton_totp_code":          nil,
+		"vpn_servers_proton_totp_secret":        nil,
+		"vpn_servers_filter_ipv6":               "exclude",
+		"vpn_servers_filter_secure_core":        "include",
+		"vpn_servers_filter_tor":                "include",
+		"vpn_servers_filter_free_tier":          "include",
+		"credentials":                           []any{},
+		"wireguard_mtu":                         0,
 	}
 }
 

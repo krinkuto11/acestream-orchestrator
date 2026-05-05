@@ -28,18 +28,18 @@ type Store struct {
 	intents         []*ScalingIntent
 	desiredReplicas int
 
-	vpnPending       map[string]int  // per-VPN pending engine counter
-	enginePending    map[string]int  // containerID -> in-flight stream reservations (claimed but not yet started)
-	streamCounts     map[string]int  // containerID -> active stream count
-	monitorCounts    map[string]int  // containerID -> monitor session count
-	forwardedPending map[string]bool // vpnContainer -> pending flag
-	lookaheadLayer   *int
-	emptyAt          map[string]time.Time // containerID -> time first became empty
+	vpnPending             map[string]int  // per-VPN pending engine counter
+	enginePending          map[string]int  // containerID -> in-flight stream reservations (claimed but not yet started)
+	streamCounts           map[string]int  // containerID -> active stream count
+	monitorCounts          map[string]int  // containerID -> monitor session count
+	forwardedPending       map[string]bool // vpnContainer -> pending flag
+	lookaheadLayer         *int
+	emptyAt                map[string]time.Time // containerID -> time first became empty
 	targetConfigHash       string
 	targetConfigGeneration int
 
 	// ─── Proxy-plane state ────────────────────────────────────────────────────
-	streams map[string]*StreamState   // contentID -> StreamState
+	streams map[string]*StreamState    // contentID -> StreamState
 	stats   map[string][]*StatSnapshot // contentID -> ring-buffer of snapshots
 
 	// ─── Atomic counters ──────────────────────────────────────────────────────
@@ -948,7 +948,6 @@ func (s *Store) OnStreamStarted(ev StreamStartedEvent) *StreamState {
 	if st.ContainerName == "" {
 		st.ContainerName = st.EngineName
 	}
-
 
 	s.streams[st.ID] = st
 	if st.EngineID != "" {

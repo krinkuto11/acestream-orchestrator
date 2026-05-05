@@ -73,7 +73,7 @@ CREATE INDEX IF NOT EXISTS vpn_probe_category_started ON vpn_probe(category,   s
 CREATE TABLE IF NOT EXISTS vpn_reputation (
 	server_id       TEXT NOT NULL REFERENCES vpn_server(id),
 	category        TEXT NOT NULL,
-	window          TEXT NOT NULL DEFAULT '30d' CHECK(window IN ('1h','24h','7d','30d')),
+	window          TEXT NOT NULL DEFAULT '24h' CHECK(window IN ('1h','24h','7d','30d')),
 	probes_n        INTEGER NOT NULL DEFAULT 0,
 	successes_n     INTEGER NOT NULL DEFAULT 0,
 	success_rate    REAL NOT NULL DEFAULT 0,

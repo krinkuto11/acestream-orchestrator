@@ -114,16 +114,16 @@ func TestSanitizeID(t *testing.T) {
 		want string
 	}{
 		{"abc123", "abc123"},
-		{"ABC123", "abc123"},                      // lowercased
-		{"  abc  ", "abc"},                         // trimmed
-		{`{abc}`, "abc"},                           // braces stripped
-		{`"abc"`, "abc"},                           // quotes stripped
-		{"abc.def-ghi_jkl", "abc.def-ghi_jkl"},    // allowed punctuation
-		{"abc|def", "abc|def"},                     // pipe allowed
-		{"abc def", "abc_def"},                     // space replaced
-		{"a/b/c", "a_b_c"},                         // slash replaced
-		{"", ""},                                   // empty stays empty
-		{"   ", ""},                                // whitespace-only → empty
+		{"ABC123", "abc123"},                   // lowercased
+		{"  abc  ", "abc"},                     // trimmed
+		{`{abc}`, "abc"},                       // braces stripped
+		{`"abc"`, "abc"},                       // quotes stripped
+		{"abc.def-ghi_jkl", "abc.def-ghi_jkl"}, // allowed punctuation
+		{"abc|def", "abc|def"},                 // pipe allowed
+		{"abc def", "abc_def"},                 // space replaced
+		{"a/b/c", "a_b_c"},                     // slash replaced
+		{"", ""},                               // empty stays empty
+		{"   ", ""},                            // whitespace-only → empty
 	}
 	for _, tc := range cases {
 		got := sanitizeID(tc.in)
@@ -215,8 +215,8 @@ func TestValidateStreamKey(t *testing.T) {
 	}{
 		{"abc123", "abc123"},
 		{"ABC:def-ghi", "abc:def-ghi"}, // lowercased, colon allowed
-		{"abc def", "abcdef"},           // space stripped
-		{"abc/def", "abcdef"},           // slash stripped
+		{"abc def", "abcdef"},          // space stripped
+		{"abc/def", "abcdef"},          // slash stripped
 		{"", ""},
 	}
 	for _, tc := range cases {

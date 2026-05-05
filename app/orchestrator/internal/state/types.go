@@ -13,20 +13,20 @@ const (
 )
 
 type Engine struct {
-	ContainerID   string            `json:"container_id"`
-	ContainerName string            `json:"container_name"`
-	Host          string            `json:"host"`
-	Port          int               `json:"port"`
-	APIPort       int               `json:"api_port"`
-	Labels        map[string]string `json:"labels"`
-	Forwarded     bool              `json:"forwarded"`
-	VPNContainer  string            `json:"vpn_container,omitempty"`
-	HealthStatus  HealthStatus      `json:"health_status"`
-	P2PPort       int               `json:"p2p_port,omitempty"`
-	FirstSeen     time.Time         `json:"first_seen"`
-	LastSeen      time.Time         `json:"last_seen"`
-	Draining      bool              `json:"draining"`
-	DrainReason   string            `json:"drain_reason,omitempty"`
+	ContainerID    string            `json:"container_id"`
+	ContainerName  string            `json:"container_name"`
+	Host           string            `json:"host"`
+	Port           int               `json:"port"`
+	APIPort        int               `json:"api_port"`
+	Labels         map[string]string `json:"labels"`
+	Forwarded      bool              `json:"forwarded"`
+	VPNContainer   string            `json:"vpn_container,omitempty"`
+	HealthStatus   HealthStatus      `json:"health_status"`
+	P2PPort        int               `json:"p2p_port,omitempty"`
+	FirstSeen      time.Time         `json:"first_seen"`
+	LastSeen       time.Time         `json:"last_seen"`
+	Draining       bool              `json:"draining"`
+	DrainReason    string            `json:"drain_reason,omitempty"`
 	LastAssignedAt time.Time         `json:"last_assigned_at,omitempty"`
 
 	// Runtime aggregates — populated by the management API, not persisted.
@@ -170,11 +170,11 @@ type StreamState struct {
 	Paused       bool       `json:"paused"`
 
 	// Latest stats (updated by AppendStat / UpdateStreamStats)
-	Peers             *int `json:"peers,omitempty"`
-	SpeedDown         *int `json:"speed_down,omitempty"`
-	SpeedUp           *int `json:"speed_up,omitempty"`
-	Downloaded        *int `json:"downloaded,omitempty"`
-	Uploaded          *int `json:"uploaded,omitempty"`
+	Peers      *int `json:"peers,omitempty"`
+	SpeedDown  *int `json:"speed_down,omitempty"`
+	SpeedUp    *int `json:"speed_up,omitempty"`
+	Downloaded *int `json:"downloaded,omitempty"`
+	Uploaded   *int `json:"uploaded,omitempty"`
 
 	// Live position and proxy buffer
 	Livepos           *LivePosData `json:"livepos,omitempty"`
@@ -232,7 +232,7 @@ type StreamStartedEvent struct {
 
 // StreamEndedEvent is posted by the proxy when it stops serving a stream.
 type StreamEndedEvent struct {
-	ContentID   string `json:"content_id"`
+	ContentID string `json:"content_id"`
 	// Python sends stream_id (UUID) and container_id; honour both for compat.
 	StreamID    string `json:"stream_id,omitempty"`
 	ContainerID string `json:"container_id,omitempty"`

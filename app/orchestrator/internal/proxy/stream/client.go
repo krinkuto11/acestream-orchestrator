@@ -8,8 +8,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/proxy/telemetry"
 	"github.com/acestream/acestream/internal/proxy/ts"
 )

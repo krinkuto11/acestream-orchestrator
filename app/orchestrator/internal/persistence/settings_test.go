@@ -10,9 +10,9 @@ func TestNormalizeProxySettings_StreamModeEnum(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"TS", "TS"},
 		{"HLS", "HLS"},
-		{"ts", "TS"},   // lowercase is NOT coerced — the function stores as-is and only validates the stored string value
-		{"bad", "TS"},  // invalid → default
-		{"", "TS"},     // empty → default
+		{"ts", "TS"},  // lowercase is NOT coerced — the function stores as-is and only validates the stored string value
+		{"bad", "TS"}, // invalid → default
+		{"", "TS"},    // empty → default
 	}
 	for _, tc := range cases {
 		m := map[string]any{"stream_mode": tc.in}
@@ -126,10 +126,10 @@ func TestNormalizeProxySettings_UnknownKeysPassThrough(t *testing.T) {
 
 func TestNormalizeVPNSettings_LegacyKeyRemoval(t *testing.T) {
 	m := map[string]any{
-		"providers":        []any{"prov1"},
-		"vpn_mode":         "auto",
-		"container_name":   "gluetun",
-		"enabled":          true,
+		"providers":      []any{"prov1"},
+		"vpn_mode":       "auto",
+		"container_name": "gluetun",
+		"enabled":        true,
 	}
 	out := normalizeVPNSettings(m)
 	for _, stale := range []string{"providers", "vpn_mode", "container_name"} {
@@ -204,7 +204,7 @@ func TestNormalizeVPNSettings_FilterFields(t *testing.T) {
 
 func TestNormalizeVPNSettings_BoolCoercion(t *testing.T) {
 	m := map[string]any{
-		"enabled":               "true",
+		"enabled":                  "true",
 		"vpn_servers_auto_refresh": 1,
 	}
 	out := normalizeVPNSettings(m)

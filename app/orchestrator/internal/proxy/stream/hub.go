@@ -10,8 +10,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/proxy/hls"
 	"github.com/acestream/acestream/internal/rediskeys"
 	"github.com/acestream/acestream/internal/state"

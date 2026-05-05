@@ -11,15 +11,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/proxy/ts"
 )
 
 const (
-	defaultTargetDurSec = 2.0 // target HLS segment duration in seconds
-	flushTimeoutSec     = 5.0 // force-flush partial segment after this silence
-	defaultWindowSize   = 6   // sliding window: keep N segments in memory
+	defaultTargetDurSec = 2.0                              // target HLS segment duration in seconds
+	flushTimeoutSec     = 5.0                              // force-flush partial segment after this silence
+	defaultWindowSize   = 6                                // sliding window: keep N segments in memory
 	pcrRollover         = float64(uint64(1)<<33) / 90000.0 // ~95443 s
 )
 
@@ -147,7 +147,7 @@ func (s *Segmenter) run() {
 	}
 
 	var (
-		acc      []byte    // TS packets accumulated for the current segment
+		acc      []byte       // TS packets accumulated for the current segment
 		segStart float64 = -1 // PCR of first packet in current segment (-1 = not set)
 		localSeq int
 	)
@@ -239,7 +239,7 @@ func (s *Segmenter) run() {
 
 					// Force cut if we've gone way over target duration without finding a keyframe
 					maxDur := s.targetDur * 2.5
-					
+
 					if elapsed >= s.targetDur {
 						isKeyframe := res.RandomAccess || ts.IsKeyframe(pkt)
 						if isKeyframe || elapsed >= maxDur {

@@ -29,9 +29,9 @@ type TelemetryBatch struct {
 
 // TelemetryTracker aggregates RED metrics and periodically pushes to the Orchestrator.
 type TelemetryTracker struct {
-	mu     sync.Mutex
-	batch  TelemetryBatch
-	stopCh chan struct{}
+	mu          sync.Mutex
+	batch       TelemetryBatch
+	stopCh      chan struct{}
 	totalEgress int64
 	egressRate  float64 // Mbps
 	lastEgress  int64
@@ -49,7 +49,7 @@ func NewTelemetryTracker() *TelemetryTracker {
 			Connects:    make([]string, 0, 10),
 			Disconnects: make([]string, 0, 10),
 		},
-		stopCh: make(chan struct{}),
+		stopCh:   make(chan struct{}),
 		lastTime: time.Now(),
 	}
 	go t.worker()

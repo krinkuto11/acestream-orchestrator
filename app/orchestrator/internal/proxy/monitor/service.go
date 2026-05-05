@@ -15,9 +15,9 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/acestream/acestream/internal/proxy/aceapi"
 	"github.com/acestream/acestream/internal/engine"
 	"github.com/acestream/acestream/internal/persistence"
+	"github.com/acestream/acestream/internal/proxy/aceapi"
 	"github.com/acestream/acestream/internal/state"
 )
 

@@ -22,7 +22,7 @@ type Selection struct {
 	ControlMode      string
 	PrebufferSeconds int
 	PacingMultiplier float64
-	MaxStreams        int
+	MaxStreams       int
 }
 
 // Select picks the least-loaded eligible engine from the unified state store
@@ -84,6 +84,6 @@ func Select(st *state.Store, settings *persistence.SettingsStore) (*Selection, e
 		ControlMode:      controlMode,
 		PrebufferSeconds: prebuffer,
 		PacingMultiplier: pacing,
-		MaxStreams:        maxStreams,
+		MaxStreams:       maxStreams,
 	}, nil
 }

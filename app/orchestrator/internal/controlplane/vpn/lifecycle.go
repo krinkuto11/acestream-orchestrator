@@ -50,7 +50,7 @@ func NewLifecycleManager(pub *state.RedisPublisher, prov *Provisioner) *Lifecycl
 func (lm *LifecycleManager) SetNudger(f func(string)) {
 	lm.nudger = f
 }
- 
+
 func (lm *LifecycleManager) SetEngineStopper(f func(context.Context, string)) {
 	lm.engineStopper = f
 }

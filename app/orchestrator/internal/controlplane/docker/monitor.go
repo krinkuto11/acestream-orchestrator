@@ -214,8 +214,6 @@ func Reindex(ctx context.Context) bool {
 			}
 		}
 
-
-
 		if isManagedVPN || isDynamicVPN {
 			runningVPNs[containerName] = true
 
@@ -253,7 +251,6 @@ func Reindex(ctx context.Context) bool {
 		}
 	}
 
-
 	// Update stats for all running engines
 	engineIDs := make([]string, 0, len(runningEngines))
 	for id := range runningEngines {
@@ -265,7 +262,6 @@ func Reindex(ctx context.Context) bool {
 			st.UpdateEngineStats(id, s.CPUPercent, s.MemoryUsage, s.MemoryPercent)
 		}
 	}
-
 
 	// Remove stale engines (tracked but no longer running).
 	// Grace period: skip engines registered in the last 30s — they may be

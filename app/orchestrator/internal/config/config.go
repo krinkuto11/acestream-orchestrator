@@ -37,14 +37,14 @@ type Config struct {
 	SSEUpdateInterval     time.Duration
 
 	// ── Proxy: timeouts ──────────────────────────────────────────────────────
-	UpstreamConnectTimeout  time.Duration
-	UpstreamReadTimeout     time.Duration
-	ClientWaitTimeout       time.Duration
-	StreamTimeout           time.Duration
-	ChunkTimeout            time.Duration
-	ChannelShutdownDelay    time.Duration
-	ChannelInitGracePeriod  time.Duration
-	KeepaliveInterval       time.Duration
+	UpstreamConnectTimeout time.Duration
+	UpstreamReadTimeout    time.Duration
+	ClientWaitTimeout      time.Duration
+	StreamTimeout          time.Duration
+	ChunkTimeout           time.Duration
+	ChannelShutdownDelay   time.Duration
+	ChannelInitGracePeriod time.Duration
+	KeepaliveInterval      time.Duration
 
 	// ── Proxy: buffer ────────────────────────────────────────────────────────
 	BufferChunkSize     int
@@ -94,7 +94,7 @@ type Config struct {
 
 	// ── Proxy: limits ────────────────────────────────────────────────────────
 	MaxClientsPerStreamCount int
-	MaxTotalStreams           int
+	MaxTotalStreams          int
 	MaxMemoryMB              int
 
 	// ── Control plane: Docker ────────────────────────────────────────────────
@@ -104,9 +104,9 @@ type Config struct {
 	DockerHost        string
 
 	// ── Control plane: scaling ───────────────────────────────────────────────
-	MinReplicas      int
-	MinFreeReplicas  int
-	MaxReplicas      int
+	MinReplicas         int
+	MinFreeReplicas     int
+	MaxReplicas         int
 	MaxStreamsPerEngine int
 
 	// ── Control plane: timing ────────────────────────────────────────────────
@@ -507,7 +507,7 @@ func load() *Config {
 		HLSSegmentFetchInterval: envFloat("HLS_SEGMENT_FETCH_INTERVAL", 0.5),
 
 		MaxClientsPerStreamCount: envInt("MAX_CLIENTS_PER_STREAM", 100),
-		MaxTotalStreams:           envInt("MAX_TOTAL_STREAMS", 150),
+		MaxTotalStreams:          envInt("MAX_TOTAL_STREAMS", 150),
 		MaxMemoryMB:              envInt("MAX_MEMORY_MB", 2048),
 
 		ContainerLabelKey: labelKey,
@@ -515,9 +515,9 @@ func load() *Config {
 		DockerNetwork:     envStr("DOCKER_NETWORK", ""),
 		DockerHost:        envStr("DOCKER_HOST", ""),
 
-		MinReplicas:        envInt("MIN_REPLICAS", 2),
-		MinFreeReplicas:    envInt("MIN_FREE_REPLICAS", 1),
-		MaxReplicas:        envInt("MAX_REPLICAS", 6),
+		MinReplicas:         envInt("MIN_REPLICAS", 2),
+		MinFreeReplicas:     envInt("MIN_FREE_REPLICAS", 1),
+		MaxReplicas:         envInt("MAX_REPLICAS", 6),
 		MaxStreamsPerEngine: envInt("MAX_STREAMS_PER_ENGINE", 2),
 
 		AutoscaleInterval: envDur("AUTOSCALE_INTERVAL_S", 30*time.Second),

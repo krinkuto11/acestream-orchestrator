@@ -13,8 +13,8 @@ import (
 type PortAllocator struct {
 	mu sync.Mutex
 
-	hostMin, hostMax int
-	httpMin, httpMax int
+	hostMin, hostMax   int
+	httpMin, httpMax   int
 	httpsMin, httpsMax int
 
 	hostNext  int
@@ -32,8 +32,8 @@ type PortAllocator struct {
 
 	// Per-VPN port ranges from GLUETUN_PORT_RANGE_1/2 env vars
 	vpnRangeSlots       []portRange          // ordered slot list
-	vpnRangeAssignments map[string]int        // vpnContainer -> slot index
-	vpnPortRanges       map[string]*vpnRange  // vpnContainer -> range state
+	vpnRangeAssignments map[string]int       // vpnContainer -> slot index
+	vpnPortRanges       map[string]*vpnRange // vpnContainer -> range state
 
 	// Per-VPN internal P2P ports (starting at 62062)
 	vpnP2PUsed map[string]map[int]struct{}
@@ -53,16 +53,16 @@ func newPortAllocator() *PortAllocator {
 	cfg := config.C.Load()
 
 	a := &PortAllocator{
-		hostMin: cfg.PortRangeHost.Min,
-		hostMax: cfg.PortRangeHost.Max,
-		httpMin: cfg.ACEHTTPRange.Min,
-		httpMax: cfg.ACEHTTPRange.Max,
+		hostMin:  cfg.PortRangeHost.Min,
+		hostMax:  cfg.PortRangeHost.Max,
+		httpMin:  cfg.ACEHTTPRange.Min,
+		httpMax:  cfg.ACEHTTPRange.Max,
 		httpsMin: cfg.ACEHTTPSRange.Min,
 		httpsMax: cfg.ACEHTTPSRange.Max,
 
-		usedHost:  make(map[int]struct{}),
-		usedHTTP:  make(map[int]struct{}),
-		usedHTTPS: make(map[int]struct{}),
+		usedHost:    make(map[int]struct{}),
+		usedHTTP:    make(map[int]struct{}),
+		usedHTTPS:   make(map[int]struct{}),
 		usedGluetun: make(map[int]struct{}),
 
 		vpnRangeSlots:       nil,
@@ -99,8 +99,6 @@ func newPortAllocator() *PortAllocator {
 
 	return a
 }
-
-
 
 func (a *PortAllocator) nextIn(cur, lo, hi int, used map[int]struct{}) (int, error) {
 	p := cur

@@ -39,8 +39,8 @@ func TestBuildLivePushPayload_EmptyConfig(t *testing.T) {
 
 func TestBuildLivePushPayload_RestartRequiredFieldsNotIncluded(t *testing.T) {
 	cfg := map[string]any{
-		"memory_limit":           "512m",
-		"torrent_folder_host_path": "/data",
+		"memory_limit":              "512m",
+		"torrent_folder_host_path":  "/data",
 		"disk_cache_prune_interval": float64(1440),
 	}
 	payload := buildLivePushPayload(cfg)

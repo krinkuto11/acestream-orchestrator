@@ -12,14 +12,14 @@ const (
 
 // Stream states
 const (
-	StateInitializing    = "initializing"
-	StateConnecting      = "connecting"
-	StateWaitingClients  = "waiting_for_clients"
-	StateActive          = "active"
-	StateError           = "error"
-	StateStopping        = "stopping"
-	StateStopped         = "stopped"
-	StateBuffering       = "buffering"
+	StateInitializing   = "initializing"
+	StateConnecting     = "connecting"
+	StateWaitingClients = "waiting_for_clients"
+	StateActive         = "active"
+	StateError          = "error"
+	StateStopping       = "stopping"
+	StateStopped        = "stopped"
+	StateBuffering      = "buffering"
 )
 
 // Event types

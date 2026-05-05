@@ -21,13 +21,13 @@ const officialGluetunServersURL = "https://raw.githubusercontent.com/qdm12/gluet
 // ProtonVPN server refresh is handled by the Python vpn_servers_refresh.py binary
 // since it requires the Proton SRP auth flow and is not latency-sensitive.
 type ServersRefreshService struct {
-	serversDir  string
-	rep         *ReputationEngine
-	mu          sync.Mutex
-	inProgress  bool
-	lastOK      *bool
-	lastErr     string
-	lastAt      time.Time
+	serversDir string
+	rep        *ReputationEngine
+	mu         sync.Mutex
+	inProgress bool
+	lastOK     *bool
+	lastErr    string
+	lastAt     time.Time
 
 	initialDone chan struct{}
 	once        sync.Once

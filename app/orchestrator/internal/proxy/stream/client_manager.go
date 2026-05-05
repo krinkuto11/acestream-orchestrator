@@ -10,8 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/acestream/acestream/internal/config"
-	"github.com/acestream/acestream/internal/rediskeys"
 	"github.com/acestream/acestream/internal/proxy/telemetry"
+	"github.com/acestream/acestream/internal/rediskeys"
 )
 
 // ClientRecord holds metadata for one connected client.
