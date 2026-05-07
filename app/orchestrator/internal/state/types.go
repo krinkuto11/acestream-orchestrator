@@ -75,6 +75,10 @@ type VPNNode struct {
 	// It is preferred over ContainerName for cross-Docker-network connectivity.
 	ControlHost string `json:"control_host,omitempty"`
 
+	// ProbeNode is true for VPN nodes provisioned exclusively for active reputation
+	// probing. The autoscaler excludes these from compaction.
+	ProbeNode bool `json:"probe_node,omitempty"`
+
 	// ActiveProbe is set while this node is running an active reputation probe.
 	ActiveProbe *ActiveProbeInfo `json:"active_probe,omitempty"`
 }

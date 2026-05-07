@@ -242,6 +242,7 @@ func (p *Provisioner) ProvisionNodeForProbe(ctx context.Context, targetHostname 
 		Protocol:         protocol,
 		CredentialID:     lease.CredentialID,
 		ManagedDynamic:   true,
+		ProbeNode:        true,
 		AssignedHostname: assignedHostname,
 		ControlHost:      controlHost,
 		FirstSeen:        now,

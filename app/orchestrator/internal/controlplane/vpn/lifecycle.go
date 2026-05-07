@@ -114,7 +114,7 @@ func (lm *LifecycleManager) reconcile(ctx context.Context) {
 			lm.gcDraining(ctx, node)
 			continue
 		}
-		if !node.Healthy && node.ManagedDynamic && node.UnhealthySince != nil {
+		if !node.Healthy && node.ManagedDynamic && !node.ProbeNode && node.UnhealthySince != nil {
 			if time.Since(*node.UnhealthySince) > cfg.VPNUnhealthyGracePeriod {
 				slog.Info("VPN node unhealthy past grace; auto-draining",
 					"name", node.ContainerName,
@@ -244,6 +244,10 @@ func (lm *LifecycleManager) scaleDownIdle(ctx context.Context, desiredVPNs int) 
 		if n.Lifecycle == "draining" {
 			continue
 		}
+		// Probe nodes are ephemeral and managed by the active probing job — never compact them.
+		if n.ProbeNode {
+			continue
+		}
 		// If the node is very new, protect it from scale-down.
 		if n.HealthySince != nil && time.Since(*n.HealthySince) < scaleDownCooldown {
 			continue
@@ -334,6 +338,9 @@ func (lm *LifecycleManager) healNotReady(ctx context.Context) {
 	cfg := config.C.Load()
 	for _, node := range state.Global.ListNotReadyVPNNodes() {
 		name := node.ContainerName
+		if node.ProbeNode {
+			continue
+		}
 		if _, alreadyHealing := lm.activeHealings.Load(name); alreadyHealing {
 			continue
 		}
