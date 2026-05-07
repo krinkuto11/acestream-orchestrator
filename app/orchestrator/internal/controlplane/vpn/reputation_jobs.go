@@ -270,7 +270,7 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 	}
 
 	// Provision probe engine on the VPN node.
-	engineName, apiPort, engineContainerID, err := re.spawner.SpawnProbeEngine(ctx, vpnResult.ContainerName)
+	engineName, engineHTTPPort, engineAPIPort, engineContainerID, err := re.spawner.SpawnProbeEngine(ctx, vpnResult.ContainerName)
 	if err != nil {
 		cleanup()
 		return fmt.Errorf("spawn engine: %w", err)
@@ -282,15 +282,15 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 		cleanup()
 	}
 
-	// Wait briefly for the engine API port to become ready (up to 30 s).
+	// Wait for the engine HTTP webui to become ready (up to 60 s).
 	engineHost := engineName
-	if err := waitForEngineAPI(ctx, engineHost, apiPort, 30*time.Second); err != nil {
+	if err := waitForEngineAPI(ctx, engineHost, engineHTTPPort, 60*time.Second); err != nil {
 		engineCleanup()
 		return fmt.Errorf("engine not ready: %w", err)
 	}
 
 	// Connect via aceapi telnet client and run the probe stream.
-	client := aceapi.New(engineHost, apiPort)
+	client := aceapi.New(engineHost, engineAPIPort)
 	if err := client.Connect(); err != nil {
 		engineCleanup()
 		return fmt.Errorf("aceapi connect: %w", err)

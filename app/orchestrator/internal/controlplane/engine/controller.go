@@ -487,7 +487,7 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 
 	allVPNNodes := make(map[string]*state.VPNNode)
 	for _, n := range st.ListVPNNodes() {
-		if n.ManagedDynamic {
+		if n.ManagedDynamic && !n.ProbeNode {
 			allVPNNodes[n.ContainerName] = n
 		}
 	}

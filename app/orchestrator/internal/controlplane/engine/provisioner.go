@@ -516,11 +516,11 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 		return "", nil // VPN not enabled — no VPN needed
 	}
 
-	// Filter to ready, managed, non-draining dynamic nodes.
+	// Filter to ready, managed, non-draining, non-probe dynamic nodes.
 	var readyNames []string
 	var rejectReasons []string
 	for _, n := range dynamicNodes {
-		if !n.ManagedDynamic {
+		if !n.ManagedDynamic || n.ProbeNode {
 			continue
 		}
 		ok, reason := isNodeReady(n)

@@ -167,8 +167,8 @@ func (cm *CatalogManager) ProviderServers(provider, catalogFile string) []map[st
 // Implemented outside the vpn package to avoid circular imports with engine.
 type ProbeEngineSpawner interface {
 	// SpawnProbeEngine provisions a probe AceStream engine on the given VPN container.
-	// Returns the container name, API port, container ID, and any error.
-	SpawnProbeEngine(ctx context.Context, vpnContainer string) (containerName string, apiPort int, containerID string, err error)
+	// Returns the container name, HTTP (webui) port, telnet API port, container ID, and any error.
+	SpawnProbeEngine(ctx context.Context, vpnContainer string) (containerName string, httpPort int, apiPort int, containerID string, err error)
 	// StopEngine stops and removes the probe engine container.
 	StopEngine(ctx context.Context, containerID string) error
 }
