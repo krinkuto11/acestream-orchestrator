@@ -193,18 +193,16 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 		return fmt.Errorf("no candidates: %w", err)
 	}
 
-	// Filter candidates to servers reachable by the available credentials'
-	// providers. This prevents using ProtonVPN credentials against TorGuard
-	// servers (or any other provider mismatch).
-	availableProviders := re.prov.creds.AvailableProviders()
-	providerAllowed := make(map[string]bool, len(availableProviders))
-	for _, p := range availableProviders {
-		providerAllowed[p] = true
-	}
+	// Filter candidates to servers reachable by the available credentials,
+	// respecting each credential's provider and regions. This prevents using
+	// ProtonVPN credentials against TorGuard servers (or mismatched regions).
+	availableCreds := re.prov.creds.AvailableCredentials()
 	catalogFile := effectiveCatalogFile(map[string]interface{}{})
 	allowedHostnames := make(map[string]string) // hostname -> provider
-	for _, p := range availableProviders {
-		for _, s := range re.candidateServers(p, nil, "", false, catalogFile) {
+	for _, cred := range availableCreds {
+		p := resolveProvider("", map[string]interface{}{}, cred, cfg.VPNProvider)
+		regions := resolveRegions(nil, map[string]interface{}{}, cred, cfg.VPNRegions)
+		for _, s := range re.candidateServers(p, regions, "", false, catalogFile) {
 			hn := strings.ToLower(strings.TrimSpace(strVal(s["hostname"])))
 			if hn != "" {
 				allowedHostnames[hn] = p
@@ -219,7 +217,7 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 		}
 	}
 	if len(eligible) == 0 {
-		return fmt.Errorf("no candidates reachable by available credentials (providers: %v)", availableProviders)
+		return fmt.Errorf("no candidates reachable by available credentials")
 	}
 
 	// Find the candidate with the fewest probes (not pinned, not active).

@@ -253,23 +253,15 @@ func resolveCredentialProvider(cred map[string]interface{}) string {
 	return ""
 }
 
-// AvailableProviders returns the unique provider names present in the available
-// credential pool. Used by the active probe job to filter targets to only
-// servers reachable by currently available credentials.
-func (cm *CredentialManager) AvailableProviders() []string {
+// AvailableCredentials returns shallow copies of all currently available
+// credential maps. Used by the active probe job to resolve provider+regions
+// per-credential when building the set of probe-eligible hostnames.
+func (cm *CredentialManager) AvailableCredentials() []map[string]interface{} {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	seen := make(map[string]bool, len(cm.available))
+	out := make([]map[string]interface{}, 0, len(cm.available))
 	for _, credID := range cm.available {
-		cred := cm.byID[credID]
-		p := resolveCredentialProvider(cred)
-		if p != "" && !seen[p] {
-			seen[p] = true
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for p := range seen {
-		out = append(out, p)
+		out = append(out, cm.byID[credID])
 	}
 	return out
 }
