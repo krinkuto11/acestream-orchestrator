@@ -34,17 +34,19 @@ type Segmenter struct {
 	targetDur  float64 // seconds per segment
 	windowSize int
 
-	mu   sync.RWMutex
-	segs []*hlsSegment
+	mu                  sync.RWMutex
+	segs                []*hlsSegment
+	pendingDiscontinuity bool // set on buffer reset; consumed by next pushSegment
 
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 type hlsSegment struct {
-	seq      int
-	data     []byte
-	duration float64 // actual PCR-measured duration (or estimate)
+	seq          int
+	data         []byte
+	duration     float64 // actual PCR-measured duration (or estimate)
+	discontinuity bool   // true → emit EXT-X-DISCONTINUITY before this segment
 }
 
 // NewSegmenter creates a Segmenter and starts the background slicing goroutine.
@@ -100,6 +102,9 @@ func (s *Segmenter) Manifest(proxyBase, streamKey string) string {
 	fmt.Fprintf(&sb, "#EXT-X-TARGETDURATION:%d\n", int(math.Ceil(maxDur))+1)
 	fmt.Fprintf(&sb, "#EXT-X-MEDIA-SEQUENCE:%d\n", segs[0].seq)
 	for _, seg := range segs {
+		if seg.discontinuity {
+			sb.WriteString("#EXT-X-DISCONTINUITY\n")
+		}
 		fmt.Fprintf(&sb, "#EXTINF:%.3f,\n", seg.duration)
 		fmt.Fprintf(&sb, "%s/ace/hls/segment.ts?stream=%s&seq=%d\n", base, url.QueryEscape(streamKey), seg.seq)
 	}
@@ -145,6 +150,7 @@ func (s *Segmenter) run() {
 	if cursor < 0 {
 		cursor = -1
 	}
+	cursorGen := s.buf.Generation()
 
 	var (
 		acc      []byte       // TS packets accumulated for the current segment
@@ -256,6 +262,28 @@ func (s *Segmenter) run() {
 			}
 
 		} else {
+			// Detect a buffer Reset(): generation changes when the ring is cleared
+			// after an engine hot-swap. The cleared slots create a gap between our
+			// cursor and the new data, so ReadAfter would spin forever returning
+			// nothing. Re-anchor to the current live edge and mark a discontinuity
+			// so players know to reset their decoding state.
+			if gen := s.buf.Generation(); gen != cursorGen {
+				slog.Info("hls segmenter re-anchoring after buffer reset",
+					"stream", s.contentID, "old_cursor", cursor, "old_gen", cursorGen, "new_gen", gen)
+				acc = nil
+				segStart = -1
+				cursor = s.buf.Head()
+				if cursor < 0 {
+					cursor = -1
+				}
+				cursorGen = gen
+				s.mu.Lock()
+				s.pendingDiscontinuity = true
+				s.mu.Unlock()
+				resetFlush()
+				continue
+			}
+
 			// No new data — wait for ring buffer or force-flush on silence.
 			select {
 			case <-s.ctx.Done():
@@ -293,12 +321,14 @@ func (s *Segmenter) pushSegment(seq int, data []byte, dur float64) {
 	copy(seg, data[:aligned])
 
 	s.mu.Lock()
-	s.segs = append(s.segs, &hlsSegment{seq: seq, data: seg, duration: dur})
+	disc := s.pendingDiscontinuity
+	s.pendingDiscontinuity = false
+	s.segs = append(s.segs, &hlsSegment{seq: seq, data: seg, duration: dur, discontinuity: disc})
 	if len(s.segs) > s.windowSize {
 		s.segs = s.segs[len(s.segs)-s.windowSize:]
 	}
 	s.mu.Unlock()
 
 	slog.Debug("hls segment ready", "stream", s.contentID, "seq", seq,
-		"bytes", aligned, "dur_s", fmt.Sprintf("%.3f", dur))
+		"bytes", aligned, "dur_s", fmt.Sprintf("%.3f", dur), "discontinuity", disc)
 }

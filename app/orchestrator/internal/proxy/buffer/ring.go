@@ -82,6 +82,10 @@ type RingBuffer struct {
 	// Freshness
 	lastWriteTime time.Time
 
+	// generation is incremented on every Reset so consumers can detect
+	// buffer resets and re-anchor their read cursors.
+	generation uint64
+
 	// ── PCR-based video bitrate ───────────────────────────────────────────────
 	// The ring buffer scans every completed chunk for PCR timestamps as it is
 	// written. Bitrate is computed from the slope across a sliding window of
@@ -354,7 +358,9 @@ func (rb *RingBuffer) VideoBitrate() float64 {
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 // Reset discards all accumulated data (e.g. after engine failover). PCR state
-// is cleared so bitrate measurement restarts from a clean slate.
+// is cleared so bitrate measurement restarts from a clean slate. The generation
+// counter is incremented so consumers can detect the reset and re-anchor their
+// cursors — see Generation().
 func (rb *RingBuffer) Reset() {
 	rb.mu.Lock()
 	rb.partial = rb.partial[:0]
@@ -369,7 +375,18 @@ func (rb *RingBuffer) Reset() {
 	rb.pcrPID = 0
 	rb.pcrTotalBytes = 0
 	rb.pcrBitrateBPS = 0
+	rb.generation++
 	rb.mu.Unlock()
+}
+
+// Generation returns the current reset generation. Consumers that track this
+// value can detect a Reset() call (generation change) and re-anchor their read
+// cursors to Head() to skip the gap left by the cleared slots.
+func (rb *RingBuffer) Generation() uint64 {
+	rb.mu.RLock()
+	g := rb.generation
+	rb.mu.RUnlock()
+	return g
 }
 
 // Stop signals the buffer is done; subsequent Write calls are no-ops.
