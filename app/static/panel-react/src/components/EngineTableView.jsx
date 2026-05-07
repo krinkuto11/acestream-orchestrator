@@ -94,8 +94,6 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, vpnMode = null
   const healthVariant = healthColors[healthStatus] || 'outline'
   const lifecycle = resolveEngineLifecycle(engine, drainingVpnContainers)
   const isDraining = lifecycle === 'draining'
-  const isProbeEngine = Boolean(engine.probe_only || engine.labels?.['acestream.probe_engine'] === 'true')
-
   // Stats are delivered by the global SSE snapshot payload.
   useEffect(() => {
     setStats(engine?.docker_stats || null)
@@ -112,7 +110,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, vpnMode = null
 
   return (
     <>
-      <TableRow className={`hover:bg-accent/5${isProbeEngine ? ' opacity-60' : ''}`}>
+      <TableRow className="hover:bg-accent/5">
         <TableCell className="w-[40px]">
           <Button
             variant="ghost"
@@ -128,11 +126,6 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, vpnMode = null
             <span className="text-sm text-white truncate max-w-[10rem] block" title={engine.container_name || engine.container_id}>
               {engine.container_name || engine.container_id.slice(0, 12)}
             </span>
-            {isProbeEngine && (
-              <span style={{ fontSize: 8, fontFamily: 'var(--font-mono)', color: 'var(--acc-amber)', border: '1px solid var(--acc-amber)', padding: '0 3px', borderRadius: 2, flexShrink: 0 }}>
-                PROBE
-              </span>
-            )}
           </div>
         </TableCell>
         <TableCell className="text-center">
@@ -181,10 +174,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, vpnMode = null
           <span className="text-sm text-white">{ramText}</span>
         </TableCell>
         <TableCell className="text-center">
-          {isProbeEngine
-            ? <span className="text-sm text-muted-foreground">—</span>
-            : <span className="text-sm text-white">{engine.stream_count || engine.streams?.length || 0}</span>
-          }
+          <span className="text-sm text-white">{engine.stream_count || engine.streams?.length || 0}</span>
         </TableCell>
         <TableCell className="text-center">
           {engine.total_peers !== undefined ? (

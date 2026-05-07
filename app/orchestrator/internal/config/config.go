@@ -184,12 +184,6 @@ type Config struct {
 	ReputationExplorationC      float64
 	ReputationPickTopN          int
 
-	// ── VPN Active Probing ───────────────────────────────────────────────────
-	ReputationActiveProbingEnabled    bool
-	ReputationActiveProbeMinIdleCreds int
-	ReputationActiveProbeIntervalSecs int
-	ReputationActiveProbeMaxSecs      int
-
 	// ── Misc ────────────────────────────────────────────────────────────────
 	AutoDelete bool
 	ManualMode bool
@@ -441,22 +435,6 @@ func ApplyVPNSettings(m map[string]any) {
 			if s, ok := v.(string); ok {
 				n.VPNServersRefreshSource = s
 			}
-		case "reputation_active_probing_enabled":
-			if b, ok := v.(bool); ok {
-				n.ReputationActiveProbingEnabled = b
-			}
-		case "reputation_active_probe_min_idle_creds":
-			if p := toInt(v); p >= 0 {
-				n.ReputationActiveProbeMinIdleCreds = p
-			}
-		case "reputation_active_probe_interval_secs":
-			if p := toInt(v); p > 0 {
-				n.ReputationActiveProbeIntervalSecs = p
-			}
-		case "reputation_active_probe_max_secs":
-			if p := toInt(v); p > 0 {
-				n.ReputationActiveProbeMaxSecs = p
-			}
 		}
 	}
 	C.Store(&n)
@@ -612,11 +590,6 @@ func load() *Config {
 		ReputationAutoQuarantineFor: envDur("REPUTATION_AUTO_QUARANTINE_FOR", 3600*time.Second),
 		ReputationExplorationC:      envFloat("REPUTATION_EXPLORATION_C", 0.3),
 		ReputationPickTopN:          envInt("REPUTATION_PICK_TOP_N", 5),
-
-		ReputationActiveProbingEnabled:    envBool("REPUTATION_ACTIVE_PROBING_ENABLED", false),
-		ReputationActiveProbeMinIdleCreds: envInt("REPUTATION_ACTIVE_PROBE_MIN_IDLE_CREDS", 1),
-		ReputationActiveProbeIntervalSecs: envInt("REPUTATION_ACTIVE_PROBE_INTERVAL_SECS", 300),
-		ReputationActiveProbeMaxSecs:      envInt("REPUTATION_ACTIVE_PROBE_MAX_SECS", 60),
 	}
 }
 

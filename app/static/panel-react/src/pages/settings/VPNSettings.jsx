@@ -86,10 +86,6 @@ const DEFAULTS = {
   vpn_servers_proton_filter_secure_core: 'include',
   vpn_servers_proton_filter_tor: 'include',
   wireguard_mtu: 0,
-  reputation_active_probing_enabled: false,
-  reputation_active_probe_min_idle_creds: 1,
-  reputation_active_probe_interval_secs: 300,
-  reputation_active_probe_max_secs: 60,
 }
 
 const toNumber = (value, fallback = 0) => {
@@ -281,10 +277,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         vpn_servers_proton_filter_secure_core: String(payload?.vpn_servers_proton_filter_secure_core || 'include'),
         vpn_servers_proton_filter_tor: String(payload?.vpn_servers_proton_filter_tor || 'include'),
         wireguard_mtu: toNumber(payload?.wireguard_mtu, DEFAULTS.wireguard_mtu),
-        reputation_active_probing_enabled: Boolean(payload?.reputation_active_probing_enabled),
-        reputation_active_probe_min_idle_creds: toNumber(payload?.reputation_active_probe_min_idle_creds, DEFAULTS.reputation_active_probe_min_idle_creds),
-        reputation_active_probe_interval_secs: toNumber(payload?.reputation_active_probe_interval_secs, DEFAULTS.reputation_active_probe_interval_secs),
-        reputation_active_probe_max_secs: toNumber(payload?.reputation_active_probe_max_secs, DEFAULTS.reputation_active_probe_max_secs),
       }
       setInitialState(normalized)
       setDraft(normalized)
@@ -347,10 +339,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           vpn_servers_proton_filter_secure_core: draft.vpn_servers_proton_filter_secure_core,
           vpn_servers_proton_filter_tor: draft.vpn_servers_proton_filter_tor,
           wireguard_mtu: Math.max(0, toNumber(draft.wireguard_mtu, DEFAULTS.wireguard_mtu)),
-          reputation_active_probing_enabled: Boolean(draft.reputation_active_probing_enabled),
-          reputation_active_probe_min_idle_creds: Math.max(0, toNumber(draft.reputation_active_probe_min_idle_creds, DEFAULTS.reputation_active_probe_min_idle_creds)),
-          reputation_active_probe_interval_secs: Math.max(60, toNumber(draft.reputation_active_probe_interval_secs, DEFAULTS.reputation_active_probe_interval_secs)),
-          reputation_active_probe_max_secs: Math.max(10, toNumber(draft.reputation_active_probe_max_secs, DEFAULTS.reputation_active_probe_max_secs)),
         }
         const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
           method: 'POST', headers, body: JSON.stringify(payload),
@@ -706,50 +694,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
               </div>
             </div>
           </div>
-        )}
-      </Pane>
-
-      {/* Active Reputation Probing */}
-      <Pane
-        title="ACTIVE REPUTATION PROBING"
-        description="Use idle VPN credentials to proactively probe underprobed servers with previously-seen content IDs."
-      >
-        <SettingRow label="Enable Active Probing" description="Spin up temporary engine+VPN pairs to probe servers using idle credentials. Changes take effect immediately.">
-          <Toggle checked={Boolean(draft.reputation_active_probing_enabled)} onChange={(value) => update('reputation_active_probing_enabled', Boolean(value))}/>
-        </SettingRow>
-        {draft.reputation_active_probing_enabled && (
-          <>
-            <SettingRow label="Min Idle Credentials" description="Probe is skipped when available credentials are at or below this threshold.">
-              <input
-                type="number"
-                min={0}
-                max={20}
-                value={draft.reputation_active_probe_min_idle_creds}
-                style={inputStyle}
-                onChange={(e) => update('reputation_active_probe_min_idle_creds', Math.max(0, toNumber(e.target.value, DEFAULTS.reputation_active_probe_min_idle_creds)))}
-              />
-            </SettingRow>
-            <SettingRow label="Probe Interval (s)" description="How often to attempt an active probe cycle.">
-              <input
-                type="number"
-                min={60}
-                max={3600}
-                value={draft.reputation_active_probe_interval_secs}
-                style={inputStyle}
-                onChange={(e) => update('reputation_active_probe_interval_secs', Math.max(60, toNumber(e.target.value, DEFAULTS.reputation_active_probe_interval_secs)))}
-              />
-            </SettingRow>
-            <SettingRow label="Probe Max Duration (s)" description="Maximum time to drain the probe stream before recording a result.">
-              <input
-                type="number"
-                min={10}
-                max={300}
-                value={draft.reputation_active_probe_max_secs}
-                style={inputStyle}
-                onChange={(e) => update('reputation_active_probe_max_secs', Math.max(10, toNumber(e.target.value, DEFAULTS.reputation_active_probe_max_secs)))}
-              />
-            </SettingRow>
-          </>
         )}
       </Pane>
 

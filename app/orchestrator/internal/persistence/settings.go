@@ -413,10 +413,6 @@ func defaultVPNSettings() map[string]any {
 		"vpn_servers_filter_free_tier":          "include",
 		"credentials":                              []any{},
 		"wireguard_mtu":                            0,
-		"reputation_active_probing_enabled":        false,
-		"reputation_active_probe_min_idle_creds":   1,
-		"reputation_active_probe_interval_secs":    300,
-		"reputation_active_probe_max_secs":         60,
 	}
 }
 
