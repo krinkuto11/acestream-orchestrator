@@ -59,6 +59,16 @@ type Client struct {
 	rd   *bufio.Reader
 
 	authenticated bool
+	httpPort      int // actual HTTP port reported by engine in HELLOTS (0 = not yet known)
+}
+
+// HTTPPort returns the HTTP streaming port reported by the engine during the
+// HELLOTS handshake. Returns 0 if Authenticate has not been called yet.
+func (c *Client) HTTPPort() int {
+	c.mu.Lock()
+	p := c.httpPort
+	c.mu.Unlock()
+	return p
 }
 
 // New creates a Client. Call Connect before any other method.
@@ -101,6 +111,8 @@ func (c *Client) Close() {
 }
 
 // Authenticate runs the HELLOBG/READY handshake.
+// After a successful AUTH it sends SETOPTIONS to enable explicit STOP
+// notifications on engines that support it (version_code >= 3003600).
 func (c *Client) Authenticate() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -112,6 +124,15 @@ func (c *Client) Authenticate() error {
 	if err != nil {
 		return fmt.Errorf("ace_api HELLOTS: %w", err)
 	}
+
+	// Capture the HTTP streaming port the engine actually started on.
+	// This may differ from the port in our config (e.g. after a restart or
+	// in Docker), so we use it to rewrite playback URLs later.
+	if p := parseInt64(kv["http_port"]); p > 0 {
+		c.httpPort = int(p)
+		slog.Debug("ace_api engine http_port", "port", c.httpPort)
+	}
+	versionCode := parseInt64(kv["version_code"])
 
 	reqKey := kv["key"]
 	h := sha1.New()
@@ -134,6 +155,13 @@ func (c *Client) Authenticate() error {
 		if cmd == "AUTH" {
 			c.authenticated = true
 			slog.Debug("ace_api authenticated")
+			// Enable explicit STOP notifications on engines >= 3.0.3.600.
+			// Without this, older engines silently drop the session; newer ones
+			// emit a STOP line so we can detect stream endings immediately.
+			if versionCode >= 3003600 {
+				_ = c.write("SETOPTIONS use_stop_notifications=1")
+				slog.Debug("ace_api SETOPTIONS sent", "version_code", versionCode)
+			}
 			return nil
 		}
 		if cmd == "NOTREADY" {
@@ -205,6 +233,7 @@ func (c *Client) LoadAndStart(contentID, mode, fileIndexes string, seekback int)
 	}
 
 	info := parseStartKV(kv)
+	info.PlaybackURL = c.rewritePlaybackURL(info.PlaybackURL)
 
 	if seekback <= 0 {
 		return info, nil
@@ -241,6 +270,7 @@ func (c *Client) LoadAndStart(contentID, mode, fileIndexes string, seekback int)
 			}
 			if parts[0] == "START" {
 				merged := parseStartKV(parseKV(line))
+				merged.PlaybackURL = c.rewritePlaybackURL(merged.PlaybackURL)
 				if merged.PlaybackURL != "" {
 					info = merged
 				}
@@ -328,7 +358,8 @@ func (c *Client) PingWithStatus() (*FullStatus, error) {
 
 		if cmd == "EVENT" && len(parts) > 1 {
 			ev := ParseEventLine(line)
-			if ev["event"] == "livepos" {
+			switch ev["event"] {
+			case "livepos":
 				res.LivePos = &LivePos{
 					Pos:          parseInt64(ev["pos"]),
 					FirstTS:      coalesceInt64(ev["first_ts"], ev["live_first"]),
@@ -336,6 +367,8 @@ func (c *Client) PingWithStatus() (*FullStatus, error) {
 					IsLive:       int(parseInt64(ev["is_live"])),
 					BufferPieces: int(parseInt64(ev["buffer_pieces"])),
 				}
+			case "getuserdata":
+				_ = c.write(`USERDATA [{"gender": 0}, {"age": 0}]`)
 			}
 		}
 	}
@@ -495,7 +528,11 @@ func (c *Client) waitFor(cmd string, timeout time.Duration) (map[string]string, 
 		if parts[0] == cmd {
 			return parseKV(line), nil
 		}
-		// skip async events
+		// The engine requests user demographic data at any point during a session.
+		// Respond immediately; not replying can cause the engine to degrade tracking.
+		if parts[0] == "EVENT" && len(parts) > 1 && parts[1] == "getuserdata" {
+			_ = c.write(`USERDATA [{"gender": 0}, {"age": 0}]`)
+		}
 	}
 	return nil, &Error{"timeout waiting for " + cmd}
 }
@@ -508,8 +545,14 @@ func (c *Client) waitForEvent(eventType string, timeout time.Duration) (map[stri
 			return nil, err
 		}
 		parts := strings.Fields(line)
-		if len(parts) >= 2 && parts[0] == "EVENT" && parts[1] == eventType {
+		if len(parts) < 2 || parts[0] != "EVENT" {
+			continue
+		}
+		if parts[1] == eventType {
 			return parseKV(line), nil
+		}
+		if parts[1] == "getuserdata" {
+			_ = c.write(`USERDATA [{"gender": 0}, {"age": 0}]`)
 		}
 	}
 	return nil, &Error{"timeout waiting for EVENT " + eventType}
@@ -536,6 +579,22 @@ func parseStartKV(kv map[string]string) *StartInfo {
 		PlaybackSessionID: kv["sid"],
 		Bitrate:           int(parseIntField(kv, "bitrate")),
 	}
+}
+
+// rewritePlaybackURL replaces the host:port in a playback URL with the host
+// we connected to and the HTTP port returned in HELLOTS. The engine sometimes
+// reports a generic or container-internal address; this ensures the URL is
+// always routable from the proxy's perspective.
+func (c *Client) rewritePlaybackURL(raw string) string {
+	if raw == "" || c.httpPort == 0 {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.Host = fmt.Sprintf("%s:%d", c.host, c.httpPort)
+	return u.String()
 }
 
 // unescape percent-decodes a URL field returned by the AceStream API.
@@ -611,7 +670,9 @@ func (c *Client) StartStream(infohash, fileIndexes string) (*StartInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("START response: %w", err)
 	}
-	return parseStartKV(kv), nil
+	info := parseStartKV(kv)
+	info.PlaybackURL = c.rewritePlaybackURL(info.PlaybackURL)
+	return info, nil
 }
 
 func normalizeMode(mode string) string {

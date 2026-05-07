@@ -14,7 +14,8 @@ func TestParseStatusLine(t *testing.T) {
 			name: "dl state",
 			line: "STATUS main:dl;0;100;512;0;128;5;0;1024;0;256",
 			expected: &StatusInfo{
-				Status:            "dl",
+				// "dl" is normalized to "playing"
+				Status:            "playing",
 				TotalProgress:     0,
 				ImmediateProgress: 100,
 				SpeedDown:         512,
@@ -31,8 +32,8 @@ func TestParseStatusLine(t *testing.T) {
 			name: "wait state (normalization)",
 			line: "STATUS main:wait;0;100;0;0;0;0;0;0;0;0",
 			expected: &StatusInfo{
-				Status: "wait",
-				// After normalization, the redundant '0' at index 1 is removed.
+				// "wait" is normalized to "prebuf"; redundant '0' at index 1 removed
+				Status:            "prebuf",
 				TotalProgress:     100,
 				ImmediateProgress: 0,
 			},
@@ -41,8 +42,8 @@ func TestParseStatusLine(t *testing.T) {
 			name: "buf state (normalization)",
 			line: "STATUS main:buf;0;100;50;512;0;0;0;0;100;0;0",
 			expected: &StatusInfo{
-				Status: "buf",
-				// After normalization, indices 1-2 (0;100) are removed.
+				// "buf" is normalized to "prebuf"; indices 1-2 (0;100) removed
+				Status:            "prebuf",
 				TotalProgress:     50,
 				ImmediateProgress: 512,
 			},
