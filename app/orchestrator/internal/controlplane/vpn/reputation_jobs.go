@@ -126,8 +126,39 @@ func jobAutoQuarantine(ctx context.Context, db *sql.DB) {
 // jobActiveProbe periodically provisions a temporary VPN+engine pair to probe
 // underprobed servers using recently-seen content IDs, building reputation
 // data independently of user demand.
+// probeSession holds the live VPN node and engine containers from a completed
+// active probe so they can be reused on the next tick if the target is the same
+// and the interval is short enough to make reuse worthwhile.
+type probeSession struct {
+	TargetHostname    string
+	TargetProvider    string
+	VPNResult         *ProvisionResult
+	EngineName        string
+	EngineHTTPPort    int
+	EngineAPIPort     int
+	EngineContainerID string
+}
+
+func (s *probeSession) destroy(re *ReputationEngine) {
+	if err := re.spawner.StopEngine(context.Background(), s.EngineContainerID); err != nil {
+		slog.Warn("active probe: stop engine failed", "err", err)
+	}
+	if node, ok := state.Global.GetVPNNode(s.VPNResult.ContainerName); ok {
+		node.ActiveProbe = nil
+		state.Global.UpsertVPNNode(node)
+	}
+	if err := re.prov.DestroyNode(context.Background(), s.VPNResult.ContainerName); err != nil {
+		slog.Warn("active probe: destroy vpn node failed", "err", err)
+	}
+}
+
 func jobActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine) {
 	const minInterval = 60 * time.Second
+	// Sessions are reused across ticks when the target is the same and the
+	// probe interval is below this threshold — avoids VPN+engine cold-start
+	// overhead on short cycles.
+	const reuseThreshold = 120 * time.Second
+
 	cfg := config.C.Load()
 	interval := time.Duration(cfg.ReputationActiveProbeIntervalSecs) * time.Second
 	if interval < minInterval {
@@ -138,9 +169,14 @@ func jobActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine) {
 
 	slog.Info("active probe job started", "interval_s", int(interval.Seconds()), "enabled", cfg.ReputationActiveProbingEnabled)
 
+	var session *probeSession
+
 	for {
 		select {
 		case <-ctx.Done():
+			if session != nil {
+				session.destroy(re)
+			}
 			return
 		case <-ticker.C:
 			cfg = config.C.Load()
@@ -156,6 +192,10 @@ func jobActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine) {
 
 			if !cfg.ReputationActiveProbingEnabled {
 				slog.Debug("active probe: disabled, skipping tick")
+				if session != nil {
+					session.destroy(re)
+					session = nil
+				}
 				continue
 			}
 
@@ -165,37 +205,82 @@ func jobActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine) {
 			}
 
 			// Guard: keep at least MinIdleCreds available for demand spikes.
-			idle := re.prov.creds.AvailableCount()
-			min := cfg.ReputationActiveProbeMinIdleCreds
-			if idle <= min {
-				slog.Info("active probe: skipping — insufficient idle creds", "idle", idle, "min_required", min+1)
+			// When reusing a session the credential is already leased, so skip the guard.
+			if session == nil {
+				idle := re.prov.creds.AvailableCount()
+				min := cfg.ReputationActiveProbeMinIdleCreds
+				if idle <= min {
+					slog.Info("active probe: skipping — insufficient idle creds", "idle", idle, "min_required", min+1)
+					continue
+				}
+			}
+
+			// Select the next target, excluding all active hostnames except the
+			// current session's target so it remains a valid candidate for reuse.
+			sessionHostname := ""
+			if session != nil {
+				sessionHostname = session.TargetHostname
+			}
+			nextHostname, nextProvider, err := selectProbeTarget(ctx, db, re, cfg, sessionHostname)
+			if err != nil {
+				slog.Warn("active probe: target selection failed", "err", err)
+				if session != nil {
+					session.destroy(re)
+					session = nil
+				}
 				continue
 			}
 
-			if err := runOneActiveProbe(ctx, db, re, cfg); err != nil {
+			// Decide whether to reuse the current session.
+			canReuse := session != nil &&
+				strings.EqualFold(session.TargetHostname, nextHostname) &&
+				interval < reuseThreshold
+
+			if !canReuse && session != nil {
+				slog.Info("active probe: releasing session", "old_target", session.TargetHostname, "next_target", nextHostname)
+				session.destroy(re)
+				session = nil
+			}
+
+			newSession, err := runOneActiveProbe(ctx, db, re, cfg, nextHostname, nextProvider, session)
+			if err != nil {
+				if newSession != nil {
+					newSession.destroy(re)
+				} else if session != nil {
+					session.destroy(re)
+				}
+				session = nil
 				slog.Warn("active probe: failed", "err", err)
+			} else {
+				session = newSession
 			}
 		}
 	}
 }
 
-func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cfg *config.Config) error {
-	// Pick the underprobed target: lowest probes_n server not currently active.
+// selectProbeTarget picks the next server to probe. excludeSessionHostname is
+// the current session's hostname — it is NOT excluded from active hostnames so
+// it remains a candidate for reuse comparison.
+func selectProbeTarget(ctx context.Context, db *sql.DB, re *ReputationEngine, cfg *config.Config, excludeSessionHostname string) (hostname, provider string, err error) {
 	activeHostnames := map[string]bool{}
 	for _, n := range state.Global.ListVPNNodes() {
-		if n.AssignedHostname != "" {
-			activeHostnames[strings.ToLower(n.AssignedHostname)] = true
+		if n.AssignedHostname == "" {
+			continue
 		}
+		hn := strings.ToLower(n.AssignedHostname)
+		// Keep the current session's hostname visible to candidates so we can
+		// detect same-target and reuse the session.
+		if strings.EqualFold(hn, excludeSessionHostname) {
+			continue
+		}
+		activeHostnames[hn] = true
 	}
 
 	candidates, err := persistence.GetScoredCandidates(ctx, db, "_overall", activeHostnames)
 	if err != nil || len(candidates) == 0 {
-		return fmt.Errorf("no candidates: %w", err)
+		return "", "", fmt.Errorf("no candidates: %w", err)
 	}
 
-	// Filter candidates to servers reachable by the available credentials,
-	// respecting each credential's provider and regions. This prevents using
-	// ProtonVPN credentials against TorGuard servers (or mismatched regions).
 	availableCreds := re.prov.creds.AvailableCredentials()
 	catalogFile := effectiveCatalogFile(map[string]interface{}{})
 	allowedHostnames := make(map[string]string) // hostname -> provider
@@ -209,6 +294,14 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 			}
 		}
 	}
+	// Always include the session hostname so it can be reused even though its
+	// credential is already leased (not in AvailableCredentials).
+	if excludeSessionHostname != "" {
+		if _, ok := allowedHostnames[strings.ToLower(excludeSessionHostname)]; !ok {
+			// Best-effort: include it with empty provider so reuse check still fires.
+			allowedHostnames[strings.ToLower(excludeSessionHostname)] = ""
+		}
+	}
 
 	var eligible []persistence.ScoredServer
 	for _, c := range candidates {
@@ -217,10 +310,9 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 		}
 	}
 	if len(eligible) == 0 {
-		return fmt.Errorf("no candidates reachable by available credentials")
+		return "", "", fmt.Errorf("no candidates reachable by available credentials")
 	}
 
-	// Find the candidate with the fewest probes (not pinned, not active).
 	target := eligible[0]
 	for _, c := range eligible[1:] {
 		if !c.Pinned && c.ProbesN < target.ProbesN {
@@ -228,103 +320,100 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 		}
 	}
 	if target.Hostname == "" {
-		return fmt.Errorf("no suitable target server")
+		return "", "", fmt.Errorf("no suitable target server")
 	}
 
-	targetProvider := allowedHostnames[strings.ToLower(target.Hostname)]
+	p := allowedHostnames[strings.ToLower(target.Hostname)]
+	return target.Hostname, p, nil
+}
 
+// runOneActiveProbe executes one probe cycle. If existingSession is non-nil the
+// VPN node and engine are reused (no provision/spawn/wait overhead).
+// Returns the session to persist across ticks on success, nil on failure.
+func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cfg *config.Config, targetHostname, targetProvider string, existingSession *probeSession) (*probeSession, error) {
 	// Pick a recent content ID to probe.
 	contentIDs, err := persistence.GetRecentProbedContentIDs(ctx, db, 24, 20)
 	if err != nil || len(contentIDs) == 0 {
-		return fmt.Errorf("no recent content IDs: %w", err)
+		return existingSession, fmt.Errorf("no recent content IDs: %w", err)
 	}
 	contentID := contentIDs[rand.Intn(len(contentIDs))]
 
-	slog.Info("active probe: starting", "target", target.Hostname, "provider", targetProvider, "content_id", contentID)
+	var sess *probeSession
 
-	// Provision the probe VPN node.
-	vpnResult, err := re.prov.ProvisionNodeForProbe(ctx, target.Hostname, targetProvider)
-	if err != nil {
-		return fmt.Errorf("provision vpn: %w", err)
+	if existingSession != nil {
+		slog.Info("active probe: reusing session", "target", targetHostname, "content_id", contentID)
+		sess = existingSession
+	} else {
+		slog.Info("active probe: starting", "target", targetHostname, "provider", targetProvider, "content_id", contentID)
+
+		vpnResult, err := re.prov.ProvisionNodeForProbe(ctx, targetHostname, targetProvider)
+		if err != nil {
+			return nil, fmt.Errorf("provision vpn: %w", err)
+		}
+
+		engineName, engineHTTPPort, engineAPIPort, engineContainerID, err := re.spawner.SpawnProbeEngine(ctx, vpnResult.ContainerName)
+		if err != nil {
+			_ = re.prov.DestroyNode(context.Background(), vpnResult.ContainerName)
+			return nil, fmt.Errorf("spawn engine: %w", err)
+		}
+
+		if err := waitForEngineAPI(ctx, engineName, engineHTTPPort, 60*time.Second); err != nil {
+			_ = re.spawner.StopEngine(context.Background(), engineContainerID)
+			_ = re.prov.DestroyNode(context.Background(), vpnResult.ContainerName)
+			return nil, fmt.Errorf("engine not ready: %w", err)
+		}
+
+		sess = &probeSession{
+			TargetHostname:    targetHostname,
+			TargetProvider:    targetProvider,
+			VPNResult:         vpnResult,
+			EngineName:        engineName,
+			EngineHTTPPort:    engineHTTPPort,
+			EngineAPIPort:     engineAPIPort,
+			EngineContainerID: engineContainerID,
+		}
 	}
 
-	// Mark active probe on the VPN node state.
-	if node, ok := state.Global.GetVPNNode(vpnResult.ContainerName); ok {
+	// Update active probe marker on the VPN node.
+	if node, ok := state.Global.GetVPNNode(sess.VPNResult.ContainerName); ok {
 		node.ActiveProbe = &state.ActiveProbeInfo{
 			ContentID:  contentID,
 			StartedAt:  time.Now().UTC(),
-			TargetHost: target.Hostname,
+			TargetHost: targetHostname,
 		}
 		state.Global.UpsertVPNNode(node)
 	}
 
-	cleanup := func() {
-		// Clear probe marker before removing node.
-		if node, ok := state.Global.GetVPNNode(vpnResult.ContainerName); ok {
-			node.ActiveProbe = nil
-			state.Global.UpsertVPNNode(node)
-		}
-		if err := re.prov.DestroyNode(context.Background(), vpnResult.ContainerName); err != nil {
-			slog.Warn("active probe: destroy vpn node failed", "err", err)
-		}
-	}
-
-	// Provision probe engine on the VPN node.
-	engineName, engineHTTPPort, engineAPIPort, engineContainerID, err := re.spawner.SpawnProbeEngine(ctx, vpnResult.ContainerName)
-	if err != nil {
-		cleanup()
-		return fmt.Errorf("spawn engine: %w", err)
-	}
-	engineCleanup := func() {
-		if err := re.spawner.StopEngine(context.Background(), engineContainerID); err != nil {
-			slog.Warn("active probe: stop engine failed", "err", err)
-		}
-		cleanup()
-	}
-
-	// Wait for the engine HTTP webui to become ready (up to 60 s).
-	engineHost := engineName
-	if err := waitForEngineAPI(ctx, engineHost, engineHTTPPort, 60*time.Second); err != nil {
-		engineCleanup()
-		return fmt.Errorf("engine not ready: %w", err)
-	}
-
-	// Connect via aceapi telnet client and run the probe stream.
-	client := aceapi.New(engineHost, engineAPIPort)
+	client := aceapi.New(sess.EngineName, sess.EngineAPIPort)
 	if err := client.Connect(); err != nil {
-		engineCleanup()
-		return fmt.Errorf("aceapi connect: %w", err)
+		return nil, fmt.Errorf("aceapi connect: %w", err)
 	}
 	defer client.Close()
 
 	probeStart := time.Now()
 	startInfo, err := client.LoadAndStart(contentID, "content_id", "0", 0)
 	if err != nil {
-		// Record a failed probe outcome.
-		serverID, _ := re.ResolveServerID(ctx, vpnResult.Provider, target.Hostname)
-		outcome := "engine_error"
+		serverID, _ := re.ResolveServerID(ctx, sourceForProvider(sess.VPNResult.Provider), targetHostname)
 		elapsed := int(time.Since(probeStart).Milliseconds())
 		re.probes.Record(persistence.VPNProbeRow{
-			ServerID:  serverID,
-			ContentID: contentID,
-			Category:  "_overall",
-			StartedAt: probeStart,
-			Outcome:   outcome,
+			ServerID:   serverID,
+			ContentID:  contentID,
+			Category:   "_overall",
+			StartedAt:  probeStart,
+			Outcome:    "engine_error",
 			DurationMs: &elapsed,
-			Meta:      map[string]any{"probe": true},
+			Meta:       map[string]any{"probe": true},
 		})
-		engineCleanup()
-		return fmt.Errorf("LoadAndStart: %w", err)
+		return nil, fmt.Errorf("LoadAndStart: %w", err)
 	}
 
-	// Drain HLS stream to measure TTFB and sustained delivery.
 	maxDur := time.Duration(cfg.ReputationActiveProbeMaxSecs) * time.Second
 	ttfbMs, durationMs, outcome := drainProbeStream(ctx, startInfo.PlaybackURL, maxDur)
 
 	_ = client.StopPlayback()
 
-	serverID, _ := re.ResolveServerID(ctx, vpnResult.Provider, target.Hostname)
-	row := persistence.VPNProbeRow{
+	serverID, _ := re.ResolveServerID(ctx, sourceForProvider(sess.VPNResult.Provider), targetHostname)
+	re.probes.Record(persistence.VPNProbeRow{
 		ServerID:   serverID,
 		ContentID:  contentID,
 		Category:   "_overall",
@@ -333,19 +422,18 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 		TtfbMs:     ttfbMs,
 		DurationMs: durationMs,
 		Meta:       map[string]any{"probe": true},
-	}
-	re.probes.Record(row)
+	})
 
 	slog.Info("active probe: done",
-		"target", target.Hostname,
+		"target", targetHostname,
 		"content_id", contentID,
 		"outcome", outcome,
 		"ttfb_ms", ttfbMs,
 		"duration_ms", durationMs,
+		"session_reused", existingSession != nil,
 	)
 
-	engineCleanup()
-	return nil
+	return sess, nil
 }
 
 // drainProbeStream fetches the HLS playback URL and reads data up to maxDur.
