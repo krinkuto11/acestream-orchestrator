@@ -537,6 +537,9 @@ func (re *ReputationEngine) SyncCatalogToDB(ctx context.Context) error {
 			if cc == "" {
 				cc = strVal(srv["countrycode"])
 			}
+			if cc == "" {
+				cc = countryNameToCode(strVal(srv["country"]))
+			}
 
 			row := persistence.VPNServerRow{
 				ID:          id,
@@ -636,6 +639,196 @@ func pickWithJitter(candidates []persistence.ScoredServer, topN int) persistence
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// countryNameToCode maps full English country names (as used in the Gluetun
+// servers.json catalog) to ISO 3166-1 alpha-2 codes.
+func countryNameToCode(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "albania":
+		return "AL"
+	case "andorra":
+		return "AD"
+	case "argentina":
+		return "AR"
+	case "australia":
+		return "AU"
+	case "austria":
+		return "AT"
+	case "bahamas":
+		return "BS"
+	case "bangladesh":
+		return "BD"
+	case "belarus":
+		return "BY"
+	case "belgium":
+		return "BE"
+	case "belize":
+		return "BZ"
+	case "bermuda":
+		return "BM"
+	case "bolivia":
+		return "BO"
+	case "bosnia and herzegovina":
+		return "BA"
+	case "brazil":
+		return "BR"
+	case "bulgaria":
+		return "BG"
+	case "cambodia":
+		return "KH"
+	case "canada":
+		return "CA"
+	case "chile":
+		return "CL"
+	case "colombia":
+		return "CO"
+	case "costa rica":
+		return "CR"
+	case "croatia":
+		return "HR"
+	case "cyprus":
+		return "CY"
+	case "czech republic", "czechia":
+		return "CZ"
+	case "denmark":
+		return "DK"
+	case "ecuador":
+		return "EC"
+	case "egypt":
+		return "EG"
+	case "estonia":
+		return "EE"
+	case "finland":
+		return "FI"
+	case "france":
+		return "FR"
+	case "georgia":
+		return "GE"
+	case "germany":
+		return "DE"
+	case "ghana":
+		return "GH"
+	case "greece":
+		return "GR"
+	case "hong kong":
+		return "HK"
+	case "hungary":
+		return "HU"
+	case "iceland":
+		return "IS"
+	case "india":
+		return "IN"
+	case "indonesia":
+		return "ID"
+	case "ireland":
+		return "IE"
+	case "isle of man":
+		return "IM"
+	case "israel":
+		return "IL"
+	case "italy":
+		return "IT"
+	case "japan":
+		return "JP"
+	case "kazakhstan":
+		return "KZ"
+	case "kenya":
+		return "KE"
+	case "latvia":
+		return "LV"
+	case "liechtenstein":
+		return "LI"
+	case "lithuania":
+		return "LT"
+	case "luxembourg":
+		return "LU"
+	case "malaysia":
+		return "MY"
+	case "malta":
+		return "MT"
+	case "mexico":
+		return "MX"
+	case "moldova":
+		return "MD"
+	case "monaco":
+		return "MC"
+	case "mongolia":
+		return "MN"
+	case "montenegro":
+		return "ME"
+	case "netherlands":
+		return "NL"
+	case "new zealand":
+		return "NZ"
+	case "nigeria":
+		return "NG"
+	case "north macedonia":
+		return "MK"
+	case "norway":
+		return "NO"
+	case "pakistan":
+		return "PK"
+	case "panama":
+		return "PA"
+	case "peru":
+		return "PE"
+	case "philippines":
+		return "PH"
+	case "poland":
+		return "PL"
+	case "portugal":
+		return "PT"
+	case "qatar":
+		return "QA"
+	case "romania":
+		return "RO"
+	case "russia":
+		return "RU"
+	case "saudi arabia":
+		return "SA"
+	case "serbia":
+		return "RS"
+	case "singapore":
+		return "SG"
+	case "slovakia":
+		return "SK"
+	case "slovenia":
+		return "SI"
+	case "south africa":
+		return "ZA"
+	case "south korea":
+		return "KR"
+	case "spain":
+		return "ES"
+	case "sri lanka":
+		return "LK"
+	case "sweden":
+		return "SE"
+	case "switzerland":
+		return "CH"
+	case "taiwan":
+		return "TW"
+	case "thailand":
+		return "TH"
+	case "turkey":
+		return "TR"
+	case "ukraine":
+		return "UA"
+	case "united arab emirates":
+		return "AE"
+	case "united kingdom":
+		return "GB"
+	case "united states":
+		return "US"
+	case "uruguay":
+		return "UY"
+	case "venezuela":
+		return "VE"
+	case "vietnam":
+		return "VN"
+	}
+	return ""
+}
 
 func normalizeProviderStorage(provider string) string {
 	n := strings.ToLower(strings.TrimSpace(provider))
