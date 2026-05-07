@@ -193,9 +193,38 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 		return fmt.Errorf("no candidates: %w", err)
 	}
 
+	// Filter candidates to servers reachable by the available credentials'
+	// providers. This prevents using ProtonVPN credentials against TorGuard
+	// servers (or any other provider mismatch).
+	availableProviders := re.prov.creds.AvailableProviders()
+	providerAllowed := make(map[string]bool, len(availableProviders))
+	for _, p := range availableProviders {
+		providerAllowed[p] = true
+	}
+	catalogFile := effectiveCatalogFile(map[string]interface{}{})
+	allowedHostnames := make(map[string]string) // hostname -> provider
+	for _, p := range availableProviders {
+		for _, s := range re.candidateServers(p, nil, "", false, catalogFile) {
+			hn := strings.ToLower(strings.TrimSpace(strVal(s["hostname"])))
+			if hn != "" {
+				allowedHostnames[hn] = p
+			}
+		}
+	}
+
+	var eligible []persistence.ScoredServer
+	for _, c := range candidates {
+		if _, ok := allowedHostnames[strings.ToLower(c.Hostname)]; ok {
+			eligible = append(eligible, c)
+		}
+	}
+	if len(eligible) == 0 {
+		return fmt.Errorf("no candidates reachable by available credentials (providers: %v)", availableProviders)
+	}
+
 	// Find the candidate with the fewest probes (not pinned, not active).
-	target := candidates[0]
-	for _, c := range candidates[1:] {
+	target := eligible[0]
+	for _, c := range eligible[1:] {
 		if !c.Pinned && c.ProbesN < target.ProbesN {
 			target = c
 		}
@@ -204,6 +233,8 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 		return fmt.Errorf("no suitable target server")
 	}
 
+	targetProvider := allowedHostnames[strings.ToLower(target.Hostname)]
+
 	// Pick a recent content ID to probe.
 	contentIDs, err := persistence.GetRecentProbedContentIDs(ctx, db, 24, 20)
 	if err != nil || len(contentIDs) == 0 {
@@ -211,10 +242,10 @@ func runOneActiveProbe(ctx context.Context, db *sql.DB, re *ReputationEngine, cf
 	}
 	contentID := contentIDs[rand.Intn(len(contentIDs))]
 
-	slog.Info("active probe: starting", "target", target.Hostname, "content_id", contentID)
+	slog.Info("active probe: starting", "target", target.Hostname, "provider", targetProvider, "content_id", contentID)
 
 	// Provision the probe VPN node.
-	vpnResult, err := re.prov.ProvisionNodeForProbe(ctx, target.Hostname)
+	vpnResult, err := re.prov.ProvisionNodeForProbe(ctx, target.Hostname, targetProvider)
 	if err != nil {
 		return fmt.Errorf("provision vpn: %w", err)
 	}

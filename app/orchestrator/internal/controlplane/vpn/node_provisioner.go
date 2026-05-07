@@ -181,13 +181,14 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 }
 
 // ProvisionNodeForProbe is like ProvisionNode but pins SERVER_HOSTNAMES to
-// targetHostname and bypasses GetSafeHostname selection. The resulting VPN
-// node is marked as a probe node in global state.
-func (p *Provisioner) ProvisionNodeForProbe(ctx context.Context, targetHostname string) (*ProvisionResult, error) {
+// targetHostname and bypasses GetSafeHostname selection. targetProvider is used
+// to prefer a matching credential from the pool. The resulting VPN node is
+// marked as a probe node in global state.
+func (p *Provisioner) ProvisionNodeForProbe(ctx context.Context, targetHostname, targetProvider string) (*ProvisionResult, error) {
 	cfg := config.C.Load()
 	containerName := generateContainerName("gluetun-probe")
 
-	lease, err := p.creds.AcquireLease(containerName)
+	lease, err := p.creds.AcquireLeaseForProvider(containerName, targetProvider)
 	if err != nil {
 		return nil, fmt.Errorf("credential acquire: %w", err)
 	}

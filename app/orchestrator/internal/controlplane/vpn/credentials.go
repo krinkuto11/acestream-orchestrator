@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -236,6 +237,75 @@ func (cm *CredentialManager) AvailableCount() int {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	return len(cm.available)
+}
+
+// resolveCredentialProvider extracts the VPN provider name from a raw credential map.
+func resolveCredentialProvider(cred map[string]interface{}) string {
+	for _, key := range []string{"provider", "vpn_service_provider"} {
+		if v, ok := cred[key].(string); ok && v != "" {
+			v = strings.ToLower(strings.TrimSpace(v))
+			if alias, ok := providerAliases[v]; ok {
+				return alias
+			}
+			return v
+		}
+	}
+	return ""
+}
+
+// AvailableProviders returns the unique provider names present in the available
+// credential pool. Used by the active probe job to filter targets to only
+// servers reachable by currently available credentials.
+func (cm *CredentialManager) AvailableProviders() []string {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	seen := make(map[string]bool, len(cm.available))
+	for _, credID := range cm.available {
+		cred := cm.byID[credID]
+		p := resolveCredentialProvider(cred)
+		if p != "" && !seen[p] {
+			seen[p] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	return out
+}
+
+// AcquireLeaseForProvider atomically reserves the first available credential
+// whose provider matches the requested provider. Falls back to any available
+// credential if none match. Returns nil lease (no error) when pool is empty.
+func (cm *CredentialManager) AcquireLeaseForProvider(containerID, provider string) (*Lease, error) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	if credID, ok := cm.leases[containerID]; ok {
+		return &Lease{ContainerID: containerID, CredentialID: credID, LeasedAt: cm.leaseTimes[containerID], Credential: cm.byID[credID]}, nil
+	}
+	if len(cm.available) == 0 {
+		return nil, nil
+	}
+
+	// Prefer a credential whose provider matches.
+	idx := -1
+	for i, credID := range cm.available {
+		if resolveCredentialProvider(cm.byID[credID]) == provider {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		idx = 0 // fallback: any available credential
+	}
+
+	credID := cm.available[idx]
+	cm.available = append(cm.available[:idx], cm.available[idx+1:]...)
+	cm.leases[containerID] = credID
+	now := time.Now().UTC()
+	cm.leaseTimes[containerID] = now
+	return &Lease{ContainerID: containerID, CredentialID: credID, LeasedAt: now, Credential: cm.byID[credID]}, nil
 }
 
 // TotalCount returns the total number of credentials in the pool.
