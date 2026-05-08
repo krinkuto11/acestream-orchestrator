@@ -1527,8 +1527,10 @@ func (s *ProxyServer) registerStaticRoutes() {
 		info, err := os.Stat(fpath)
 		if err != nil || info.IsDir() {
 			// File not found or is a directory; serve index.html for SPA routing.
+			// Use "/" not "/index.html": FileServer redirects /index.html → ./ which
+			// resolves relative to the request path and breaks deep routes on reload.
 			s.setPanelCookie(w)
-			r.URL.Path = "/index.html"
+			r.URL.Path = "/"
 			fileServer.ServeHTTP(w, r)
 			return
 		}
