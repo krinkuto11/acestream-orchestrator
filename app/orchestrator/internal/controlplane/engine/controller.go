@@ -110,22 +110,20 @@ func (c *Controller) EnsureMinimum() {
 	}
 
 	// Compute free engines (healthy/unknown, not draining, not actively used).
-	// Monitor sessions count as load alongside active streams.
 	streamCounts := st.GetAllStreamCounts()
-	monitorCounts := st.GetAllMonitorCounts()
 	var freeCount, totalRunning int
 	for _, e := range engines {
 		if e.HealthStatus == state.HealthUnhealthy || e.Draining {
 			continue
 		}
 		totalRunning++
-		load := streamCounts[e.ContainerID] + monitorCounts[e.ContainerID]
+		load := streamCounts[e.ContainerID]
 		if load == 0 {
 			freeCount++
 		}
 	}
 
-	desired, _ := computeDesiredReplicas(totalRunning, freeCount, streamCounts, monitorCounts, engines)
+	desired, _ := computeDesiredReplicas(totalRunning, freeCount, streamCounts, engines)
 	prev := st.GetDesiredReplicas()
 	pending := st.TotalPending()
 
@@ -152,10 +150,10 @@ func (c *Controller) EnsureMinimum() {
 	c.Nudge("ensure_minimum")
 }
 
-func computeDesiredReplicas(totalRunning, freeCount int, streamCounts, monitorCounts map[string]int, engines []*state.Engine) (int, string) {
+func computeDesiredReplicas(totalRunning, freeCount int, streamCounts map[string]int, engines []*state.Engine) (int, string) {
 	cfg := config.C.Load()
 
-	// Base requirement: engines currently serving streams or monitor sessions.
+	// Base requirement: engines currently serving streams.
 	occupiedCount := totalRunning - freeCount
 	desired := occupiedCount + cfg.MinFreeReplicas
 
@@ -168,7 +166,7 @@ func computeDesiredReplicas(totalRunning, freeCount int, streamCounts, monitorCo
 	threshold := cfg.MaxStreamsPerEngine - 1
 	var loadList []int
 	for _, e := range engines {
-		// Use stream load only for lookahead (monitor sessions are overhead, not stream slots)
+		// Use stream load only for lookahead
 		loadList = append(loadList, streamCounts[e.ContainerID])
 	}
 	if len(loadList) > 0 {
@@ -803,13 +801,12 @@ func canStopEngine(containerID string, bypassGrace bool) bool {
 		return false
 	}
 
-	// Free replica floor (stream + monitor load both count as "used")
+	// Free replica floor
 	if cfg.MinFreeReplicas > 0 {
 		allCounts := st.GetAllStreamCounts()
-		monCounts := st.GetAllMonitorCounts()
 		freeCount := 0
 		for _, e := range engines {
-			if allCounts[e.ContainerID]+monCounts[e.ContainerID] == 0 && !e.Draining {
+			if allCounts[e.ContainerID] == 0 && !e.Draining {
 				freeCount++
 			}
 		}

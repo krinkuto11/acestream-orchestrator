@@ -30,14 +30,11 @@ type Engine struct {
 	LastAssignedAt time.Time         `json:"last_assigned_at,omitempty"`
 
 	// Runtime aggregates — populated by the management API, not persisted.
-	TotalPeers         int        `json:"total_peers"`
-	TotalSpeedDown     int        `json:"total_speed_down"`
-	TotalSpeedUp       int        `json:"total_speed_up"`
-	StreamCount        int        `json:"stream_count"`
-	MonitorStreamCount int        `json:"monitor_stream_count"`
-	MonitorSpeedDown   int        `json:"monitor_speed_down"`
-	MonitorSpeedUp     int        `json:"monitor_speed_up"`
-	LastHealthCheck    *time.Time `json:"last_health_check,omitempty"`
+	TotalPeers      int        `json:"total_peers"`
+	TotalSpeedDown  int        `json:"total_speed_down"`
+	TotalSpeedUp    int        `json:"total_speed_up"`
+	StreamCount     int        `json:"stream_count"`
+	LastHealthCheck *time.Time `json:"last_health_check,omitempty"`
 	LastStreamUsage    *time.Time `json:"last_stream_usage,omitempty"`
 	EngineVariant      string     `json:"engine_variant,omitempty"`
 	Platform           string     `json:"platform,omitempty"`

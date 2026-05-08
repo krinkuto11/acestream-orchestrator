@@ -27,7 +27,6 @@ import (
 	"github.com/acestream/acestream/internal/persistence"
 	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/proxy/hls"
-	"github.com/acestream/acestream/internal/proxy/monitor"
 	"github.com/acestream/acestream/internal/proxy/stream"
 	"github.com/acestream/acestream/internal/proxy/telemetry"
 	"github.com/acestream/acestream/internal/state"
@@ -38,7 +37,6 @@ var fileIndexRE = regexp.MustCompile(`^\d+(,\d+)*$`)
 // ProxyServer serves the proxy streaming API on :8000.
 type ProxyServer struct {
 	hub      *stream.Hub
-	mon      *monitor.Service
 	st       *state.Store
 	settings *persistence.SettingsStore
 	mux      *http.ServeMux
@@ -57,7 +55,6 @@ type ProxyServer struct {
 // NewProxyServer wires up all proxy routes.
 func NewProxyServer(
 	hub *stream.Hub,
-	mon *monitor.Service,
 	st *state.Store,
 	settings *persistence.SettingsStore,
 	ctrl *cpengine.Controller,
@@ -71,7 +68,6 @@ func NewProxyServer(
 ) *ProxyServer {
 	s := &ProxyServer{
 		hub:        hub,
-		mon:        mon,
 		st:         st,
 		settings:   settings,
 		ctrl:       ctrl,
@@ -101,14 +97,6 @@ func (s *ProxyServer) registerRoutes() {
 
 	s.mux.HandleFunc("/internal/proxy/stop", requireAPIKey(s.handleInternalStop))
 	s.mux.HandleFunc("/internal/proxy/swap", requireAPIKey(s.handleInternalSwap))
-
-	s.mux.HandleFunc("POST /api/v1/ace/monitor/legacy/start", s.handleMonitorStart)
-	s.mux.HandleFunc("GET /api/v1/ace/monitor/legacy/reusable", s.handleMonitorReusable)
-	s.mux.HandleFunc("GET /api/v1/ace/monitor/legacy", s.handleMonitorList)
-	s.mux.HandleFunc("GET /api/v1/ace/monitor/legacy/{id}", s.handleMonitorGet)
-	s.mux.HandleFunc("DELETE /api/v1/ace/monitor/legacy/{id}", s.handleMonitorDelete)
-	s.mux.HandleFunc("DELETE /api/v1/ace/monitor/legacy/{id}/entry", s.handleMonitorDelete)
-	s.mux.HandleFunc("POST /api/v1/ace/monitor/legacy/parse-m3u", s.handleMonitorParseM3U)
 
 	s.mux.HandleFunc("/proxy/health", s.handleHealth)
 
@@ -488,134 +476,6 @@ func (s *ProxyServer) handleInternalSwap(w http.ResponseWriter, r *http.Request)
 func (s *ProxyServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"status":"ok","worker":"%s"}`, s.hub.WorkerID())
-}
-
-// ─── Monitor handlers ─────────────────────────────────────────────────────────
-
-func (s *ProxyServer) handleMonitorStart(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
-	var req monitor.StartRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
-		return
-	}
-	sess, err := s.mon.Start(req)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(sess) //nolint:errcheck
-}
-
-func (s *ProxyServer) handleMonitorList(w http.ResponseWriter, r *http.Request) {
-	full := r.URL.Query().Get("recent") != "false"
-	sessions := s.mon.List(full)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"items": sessions, "total": len(sessions)}) //nolint:errcheck
-}
-
-func (s *ProxyServer) handleMonitorGet(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	full := r.URL.Query().Get("recent") != "false"
-	sess := s.mon.Get(id, full)
-	if sess == nil {
-		http.Error(w, `{"error":"monitor not found"}`, http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sess) //nolint:errcheck
-}
-
-func (s *ProxyServer) handleMonitorDelete(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !s.mon.Delete(id) {
-		http.Error(w, `{"error":"monitor not found"}`, http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"}) //nolint:errcheck
-}
-
-func (s *ProxyServer) handleMonitorReusable(w http.ResponseWriter, r *http.Request) {
-	contentID := r.URL.Query().Get("content_id")
-	sess := s.mon.GetReusable(contentID)
-	w.Header().Set("Content-Type", "application/json")
-	if sess == nil {
-		json.NewEncoder(w).Encode(map[string]any{"session": nil}) //nolint:errcheck
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]any{"session": sess}) //nolint:errcheck
-}
-
-func (s *ProxyServer) handleMonitorParseM3U(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MiB — M3U files can be large
-	var body struct {
-		M3UContent string `json:"m3u_content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid json"}) //nolint:errcheck
-		return
-	}
-
-	type m3uItem struct {
-		Name      string `json:"name"`
-		ContentID string `json:"content_id"`
-	}
-
-	var items []m3uItem
-	var pendingName string
-	for _, line := range strings.Split(body.M3UContent, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#EXTINF:") {
-			// Extract name from #EXTINF:-1,Channel Name
-			if idx := strings.Index(line, ","); idx >= 0 {
-				pendingName = strings.TrimSpace(line[idx+1:])
-			}
-			continue
-		}
-		var contentID string
-		if strings.HasPrefix(line, "acestream://") {
-			contentID = strings.TrimPrefix(line, "acestream://")
-		} else if strings.Contains(line, "infohash=") {
-			// http://host/ace/getstream?infohash=abc123
-			u, err := parseURLQuery(line)
-			if err == nil {
-				contentID = u
-			}
-		}
-		if contentID != "" {
-			name := pendingName
-			if name == "" {
-				name = contentID
-			}
-			items = append(items, m3uItem{Name: name, ContentID: contentID})
-			pendingName = ""
-		}
-	}
-	if items == nil {
-		items = []m3uItem{}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"items": items}) //nolint:errcheck
-}
-
-func parseURLQuery(rawURL string) (string, error) {
-	idx := strings.Index(rawURL, "infohash=")
-	if idx < 0 {
-		return "", fmt.Errorf("no infohash")
-	}
-	val := rawURL[idx+len("infohash="):]
-	if amp := strings.IndexByte(val, '&'); amp >= 0 {
-		val = val[:amp]
-	}
-	return val, nil
 }
 
 // ─── Engine selection ─────────────────────────────────────────────────────────

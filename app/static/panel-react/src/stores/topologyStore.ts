@@ -673,16 +673,6 @@ const buildSnapshot = (
 
   // 3. Process engine nodes with stable staggered lanes
   normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, measuredDownKbps, measuredUpKbps, assignedTunnel }, index) => {
-    const engineStreams = resolveStreamsForEngine(engine)
-    const monitorStreamCount = Math.max(
-      0,
-      Number(
-        engine.monitor_stream_count ??
-          ((engine.stream_count ?? engineStreams.length) - engineStreams.length),
-      ),
-    )
-    const hasMonitoringSession = monitorStreamCount > 0
-
     const localIndex = tunnelLocalIndex[assignedTunnel] || 0
     tunnelLocalIndex[assignedTunnel] = localIndex + 1
 
@@ -709,13 +699,9 @@ const buildSnapshot = (
     )
 
     // VPN → Engine: P2P download speed.
-    // Keep the route visibly active during monitor-only sessions even if Ace reports 0 throughput.
-    const monitoringFloorMbps = hasMonitoringSession && measuredDownMbps <= 0
-      ? Math.max(0.3, monitorStreamCount * 0.3)
-      : 0
     const bandwidthMbps = measuredDownMbps > 0
       ? measuredDownMbps
-      : (monitoringFloorMbps > 0 ? monitoringFloorMbps : (isMockMode ? randomBetween(8, 72) : 0))
+      : (isMockMode ? randomBetween(8, 72) : 0)
     
     // Engine → Proxy: actual per-engine ingress from proxy metrics when available.
     // If the per-engine ingress map exists, treat missing/zero as zero (authoritative)
@@ -800,12 +786,11 @@ const buildSnapshot = (
         bandwidthMbps: bandwidthMbps,
         uploadMbps: edgeUploadBw,
         labelPosition: 'near-target',
-        monitoringActive: hasMonitoringSession,
         drainingRoute: edgeIsDraining,
         flowActive: vpnEngineFlowActive,
       },
       style: {
-        stroke: (failoverActive || hasMonitoringSession || edgeIsDraining) ? '#f59e0b' : '#64748b',
+        stroke: (failoverActive || edgeIsDraining) ? '#f59e0b' : '#64748b',
         strokeWidth: clamp(1.6 + bandwidthMbps / 55, 1.6, 5.8),
         strokeDasharray: (failoverActive || edgeIsDraining) ? '8 5' : undefined,
       },

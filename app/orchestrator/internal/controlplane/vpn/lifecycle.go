@@ -266,13 +266,12 @@ func (lm *LifecycleManager) scaleDownIdle(ctx context.Context, desiredVPNs int) 
 	}
 	var ss []scored
 	streamCounts := st.GetAllStreamCounts()
-	monitorCounts := st.GetAllMonitorCounts()
 
 	for _, n := range active {
 		engines := st.GetEnginesByVPN(n.ContainerName)
 		totalStreams := 0
 		for _, e := range engines {
-			totalStreams += streamCounts[e.ContainerID] + monitorCounts[e.ContainerID]
+			totalStreams += streamCounts[e.ContainerID]
 		}
 		ss = append(ss, scored{
 			node:        n,
@@ -372,7 +371,6 @@ func (lm *LifecycleManager) gcDraining(ctx context.Context, node *state.VPNNode)
 
 	engines := st.GetEnginesByVPN(node.ContainerName)
 	streamCounts := st.GetAllStreamCounts()
-	monitorCounts := st.GetAllMonitorCounts()
 
 	for _, e := range engines {
 		st.MarkEngineDraining(e.ContainerID, "vpn_draining")
@@ -380,7 +378,7 @@ func (lm *LifecycleManager) gcDraining(ctx context.Context, node *state.VPNNode)
 
 	allIdle := true
 	for _, e := range engines {
-		if streamCounts[e.ContainerID]+monitorCounts[e.ContainerID] > 0 {
+		if streamCounts[e.ContainerID] > 0 {
 			allIdle = false
 			break
 		}

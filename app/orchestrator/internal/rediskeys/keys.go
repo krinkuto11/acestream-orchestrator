@@ -17,7 +17,6 @@ func CPVPNNodeKey(name string) string {
 
 const CPStateChanged = "cp:state_changed"
 const CPStreamCounts = "cp:stream_counts"
-const CPMonitorCounts = "cp:monitor_counts"
 const CPDesiredReplicas = "cp:desired_replicas"
 
 func CPForwardedPending(vpnContainer string) string {

@@ -9,7 +9,6 @@ import { EnginesPage } from './pages/EnginesPage'
 import { StreamsPage } from './pages/StreamsPage'
 import { EventsPage } from './pages/EventsPage'
 import { MetricsPage } from './pages/MetricsPage'
-import { StreamMonitoringPage } from './pages/StreamMonitoringPage'
 import { RoutingTopologyPage } from './pages/RoutingTopologyPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { ReputationPage } from './pages/vpn/ReputationPage'
@@ -23,7 +22,6 @@ const PAGE_TITLES = {
   '/':                  ['Overview',   'signal-room'],
   '/engines':           ['Engines',    'rack-view'],
   '/streams':           ['Streams',    'active-sessions'],
-  '/stream-monitoring': ['Monitor',    'stream-detail'],
   '/routing-topology':  ['Topology',   'mesh-graph'],
   '/events':            ['Events',     'audit-log'],
   '/metrics':           ['Dashboard',  'telemetry'],
@@ -397,9 +395,6 @@ function AppContent() {
               }/>
               <Route path="/metrics" element={
                 <MetricsPage apiKey={apiKey} orchUrl={orchUrl}/>
-              }/>
-              <Route path="/stream-monitoring" element={
-                <StreamMonitoringPage apiKey={apiKey} orchUrl={orchUrl} streams={streams}/>
               }/>
               <Route path="/routing-topology" element={
                 <RoutingTopologyPage

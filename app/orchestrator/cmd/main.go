@@ -24,7 +24,6 @@ import (
 	"github.com/acestream/acestream/internal/metrics"
 	"github.com/acestream/acestream/internal/persistence"
 	"github.com/acestream/acestream/internal/proxy/hls"
-	proxymonitor "github.com/acestream/acestream/internal/proxy/monitor"
 	proxystream "github.com/acestream/acestream/internal/proxy/stream"
 	"github.com/acestream/acestream/internal/state"
 )
@@ -210,12 +209,9 @@ func main() {
 	// ── Proxy plane ────────────────────────────────────────────────────────────
 	sink := &stateSink{st: st, rep: repEngine}
 	hub := proxystream.NewHub(rdb, sink)
-	monSvc := proxymonitor.New(rdb, st, settingsStore)
-
-	go monSvc.RunCountsPublisher(appCtx, 5*time.Second)
 	go metrics.RunCollector(appCtx, st, 5*time.Second)
 
-	proxySrv := api.NewProxyServer(hub, monSvc, st, settingsStore, ctrl, cb, pub, prov, creds, svcRefresh, vpnManager, repEngine)
+	proxySrv := api.NewProxyServer(hub, st, settingsStore, ctrl, cb, pub, prov, creds, svcRefresh, vpnManager, repEngine)
 	proxyHTTP := &http.Server{
 		Addr:    cfg.ProxyListenAddr,
 		Handler: proxySrv,
@@ -271,7 +267,6 @@ func main() {
 	slog.Info("HTTP servers drained")
 
 	// 4. Stop ancillary services that may still be writing to state or Redis.
-	monSvc.StopAll()
 	hub.Stop()
 	hls.DefaultCache.Stop()
 

@@ -107,7 +107,6 @@ func (s *ProxyServer) registerSSERoutes() {
 	s.mux.HandleFunc("GET /api/v1/metrics/stream", s.handleSSEMetricsStream)
 	s.mux.HandleFunc("GET /api/v1/containers/{id}/logs/stream", s.handleSSEContainerLogs)
 	s.mux.HandleFunc("GET /api/v1/vpn/leases/stream", s.handleSSEVPNLeases)
-	s.mux.HandleFunc("GET /api/v1/ace/monitor/legacy/stream", s.handleSSEMonitorLegacy)
 	s.mux.HandleFunc("GET /api/v1/streams/{id}/details/stream", s.handleSSEStreamDetails)
 	s.mux.HandleFunc("GET /api/v1/custom-variant/reprovision/status/stream", s.handleSSEReprovisionStatus)
 	s.mux.HandleFunc("GET /api/v1/settings/engine/reprovision/status/stream", s.handleSSEReprovisionStatus)
@@ -418,44 +417,6 @@ func (s *ProxyServer) handleSSEVPNLeases(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// ─── /api/v1/ace/monitor/legacy/stream ───────────────────────────────────────
-
-func (s *ProxyServer) handleSSEMonitorLegacy(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	sseHeaders(w)
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	keepalive := time.NewTicker(15 * time.Second)
-	defer keepalive.Stop()
-
-	sendMonitor := func() bool {
-		sessions := s.mon.List(false)
-		return writeSSEEvent(w, "legacy_monitor_snapshot", map[string]any{"items": sessions})
-	}
-
-	sendMonitor()
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			if !sendMonitor() {
-				return
-			}
-		case <-keepalive.C:
-			if !writeSSEKeepAlive(w) {
-				return
-			}
-		}
-	}
-}
-
 // ─── /api/v1/streams/{id}/details/stream ────────────────────────────────────
 
 func (s *ProxyServer) handleSSEStreamDetails(w http.ResponseWriter, r *http.Request) {
@@ -579,10 +540,9 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 	canProvision := cbState == "closed"
 
 	streamCounts := s.st.GetStreamCounts()
-	monCounts := s.st.GetMonitorCounts()
 	usedCapacity := 0
 	for _, e := range engines {
-		if streamCounts[e.ContainerID]+monCounts[e.ContainerID] > 0 {
+		if streamCounts[e.ContainerID] > 0 {
 			usedCapacity++
 		}
 	}

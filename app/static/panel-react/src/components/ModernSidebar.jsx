@@ -6,11 +6,10 @@ const NAV_ITEMS = [
   { id: 'central',    label: 'Overview',   glyph: '◇', kbd: '1', href: '/' },
   { id: 'engines',    label: 'Engines',    glyph: '▤', kbd: '2', href: '/engines' },
   { id: 'streams',    label: 'Streams',    glyph: '↯', kbd: '3', href: '/streams' },
-  { id: 'monitoring', label: 'Monitor',    glyph: '▧', kbd: '4', href: '/stream-monitoring' },
-  { id: 'topology',   label: 'Topology',   glyph: '⌬', kbd: '5', href: '/routing-topology' },
-  { id: 'metrics',    label: 'Dashboard',  glyph: '▲', kbd: '6', href: '/metrics' },
-  { id: 'vpn',        label: 'VPN',        glyph: '⊘', kbd: '8', href: '/vpn' },
-  { id: 'settings',   label: 'Settings',   glyph: '⌗', kbd: '7', href: '/settings' },
+  { id: 'topology',   label: 'Topology',   glyph: '⌬', kbd: '4', href: '/routing-topology' },
+  { id: 'metrics',    label: 'Dashboard',  glyph: '▲', kbd: '5', href: '/metrics' },
+  { id: 'vpn',        label: 'VPN',        glyph: '⊘', kbd: '7', href: '/vpn' },
+  { id: 'settings',   label: 'Settings',   glyph: '⌗', kbd: '6', href: '/settings' },
 ]
 
 function BrandMark({ size = 18 }) {

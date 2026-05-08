@@ -36,7 +36,6 @@ export function TopologyEdge({
   }
 
   const isFailover = style.strokeDasharray != null
-  const isMonitoringRoute = data?.monitoringActive === true
   const isDrainingRoute = data?.drainingRoute === true
   const isPrebuffering = data?.isPrebuffering === true
 
@@ -87,9 +86,9 @@ export function TopologyEdge({
   // Fill style (active traffic)
   const fillStyle = {
     ...style,
-    stroke: isPrebuffering 
-      ? 'var(--acc-amber)' 
-      : (isFailover || isMonitoringRoute || isDrainingRoute) ? 'var(--acc-amber)' : 'var(--acc-green)',
+    stroke: isPrebuffering
+      ? 'var(--acc-amber)'
+      : (isFailover || isDrainingRoute) ? 'var(--acc-amber)' : 'var(--acc-green)',
     strokeWidth: baseStrokeWidth,
     strokeOpacity: 1,
     strokeDasharray: '6 4',

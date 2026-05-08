@@ -30,9 +30,8 @@ type Store struct {
 
 	vpnPending             map[string]int  // per-VPN pending engine counter
 	enginePending          map[string]int  // containerID -> in-flight stream reservations (claimed but not yet started)
-	streamCounts           map[string]int  // containerID -> active stream count
-	monitorCounts          map[string]int  // containerID -> monitor session count
-	forwardedPending       map[string]bool // vpnContainer -> pending flag
+	streamCounts     map[string]int  // containerID -> active stream count
+	forwardedPending map[string]bool // vpnContainer -> pending flag
 	lookaheadLayer         *int
 	emptyAt                map[string]time.Time // containerID -> time first became empty
 	targetConfigHash       string
@@ -55,7 +54,6 @@ func newStore() *Store {
 		vpnPending:       make(map[string]int),
 		enginePending:    make(map[string]int),
 		streamCounts:     make(map[string]int),
-		monitorCounts:    make(map[string]int),
 		forwardedPending: make(map[string]bool),
 		emptyAt:          make(map[string]time.Time),
 		streams:          make(map[string]*StreamState),
@@ -173,7 +171,6 @@ func (s *Store) RemoveEngine(id string) bool {
 	delete(s.engines, id)
 	delete(s.emptyAt, id)
 	delete(s.streamCounts, id)
-	delete(s.monitorCounts, id)
 	return true
 }
 
@@ -185,7 +182,6 @@ func (s *Store) RemoveEnginesByVPN(vpnName string) {
 			delete(s.engines, id)
 			delete(s.emptyAt, id)
 			delete(s.streamCounts, id)
-			delete(s.monitorCounts, id)
 		}
 	}
 }
@@ -207,7 +203,6 @@ func (s *Store) ListEnginesWithCounts() []*Engine {
 	for _, e := range s.engines {
 		cp := *e
 		cp.StreamCount = s.streamCounts[e.ContainerID]
-		cp.MonitorStreamCount = s.monitorCounts[e.ContainerID]
 		out = append(out, &cp)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -666,12 +661,12 @@ func (s *Store) GetStreamCount(containerID string) int {
 	return s.streamCounts[containerID]
 }
 
-// GetEngineTotalLoad returns the total active load on the engine, including active streams,
-// pending streams that are still initializing, and monitor sessions.
+// GetEngineTotalLoad returns the total active load on the engine, including active streams
+// and pending streams that are still initializing.
 func (s *Store) GetEngineTotalLoad(containerID string) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.streamCounts[containerID] + s.enginePending[containerID] + s.monitorCounts[containerID]
+	return s.streamCounts[containerID] + s.enginePending[containerID]
 }
 
 func (s *Store) GetAllStreamCounts() map[string]int {
@@ -699,7 +694,7 @@ func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
 	vpnLoads := make(map[string]int)
 	for cid, engine := range s.engines {
 		if engine.VPNContainer != "" {
-			vpnLoads[engine.VPNContainer] += s.streamCounts[cid] + s.enginePending[cid] + s.monitorCounts[cid]
+			vpnLoads[engine.VPNContainer] += s.streamCounts[cid] + s.enginePending[cid]
 		}
 	}
 
@@ -715,7 +710,7 @@ func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
 		if e.Draining || e.HealthStatus != HealthHealthy {
 			continue
 		}
-		load := s.streamCounts[e.ContainerID] + s.enginePending[e.ContainerID] + s.monitorCounts[e.ContainerID]
+		load := s.streamCounts[e.ContainerID] + s.enginePending[e.ContainerID]
 		if load >= maxStreams {
 			continue
 		}
@@ -782,29 +777,6 @@ func (s *Store) ReleaseEnginePending(containerID string) {
 		s.enginePending[containerID]--
 	}
 }
-
-func (s *Store) SetMonitorCount(containerID string, count int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if count <= 0 {
-		delete(s.monitorCounts, containerID)
-	} else {
-		s.monitorCounts[containerID] = count
-	}
-}
-
-func (s *Store) GetAllMonitorCounts() map[string]int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make(map[string]int, len(s.monitorCounts))
-	for k, v := range s.monitorCounts {
-		out[k] = v
-	}
-	return out
-}
-
-// GetMonitorCounts is an alias for GetAllMonitorCounts for proxy-plane compatibility.
-func (s *Store) GetMonitorCounts() map[string]int { return s.GetAllMonitorCounts() }
 
 // ─── Grace period ────────────────────────────────────────────────────────────
 

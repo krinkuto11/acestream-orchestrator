@@ -160,41 +160,36 @@ func (s *ProxyServer) registerManagementRoutes() {
 func (s *ProxyServer) mgHandleListEngines(w http.ResponseWriter, r *http.Request) {
 	engines := s.st.ListEngines()
 	streamCounts := s.st.GetStreamCounts()
-	monCounts := s.st.GetMonitorCounts()
 
 	type engineOut struct {
-		ContainerID        string            `json:"container_id"`
-		ContainerName      string            `json:"container_name"`
-		Host               string            `json:"host"`
-		Port               int               `json:"port"`
-		APIPort            int               `json:"api_port"`
-		Labels             map[string]string `json:"labels"`
-		Forwarded          bool              `json:"forwarded"`
-		VPNContainer       string            `json:"vpn_container,omitempty"`
-		HealthStatus       string            `json:"health_status"`
-		P2PPort            int               `json:"p2p_port,omitempty"`
-		FirstSeen          time.Time         `json:"first_seen"`
-		LastSeen           time.Time         `json:"last_seen"`
-		Draining           bool              `json:"draining"`
-		DrainReason        string            `json:"drain_reason,omitempty"`
-		StreamCount        int               `json:"stream_count"`
-		MonitorCount       int               `json:"monitor_count"`
-		TotalPeers         int               `json:"total_peers"`
-		TotalSpeedDown     int               `json:"total_speed_down"`
-		TotalSpeedUp       int               `json:"total_speed_up"`
-		MonitorStreamCount int               `json:"monitor_stream_count"`
-		MonitorSpeedDown   int               `json:"monitor_speed_down"`
-		MonitorSpeedUp     int               `json:"monitor_speed_up"`
-		LastHealthCheck    *time.Time        `json:"last_health_check,omitempty"`
-		LastStreamUsage    *time.Time        `json:"last_stream_usage,omitempty"`
-		EngineVariant      string            `json:"engine_variant,omitempty"`
-		Platform           string            `json:"platform,omitempty"`
-		Version            string            `json:"version,omitempty"`
-		ForwardedPort      *int              `json:"forwarded_port,omitempty"`
-		CPUPercent         float64           `json:"cpu_percent"`
-		MemoryUsage        int64             `json:"memory_usage"`
-		MemoryPercent      float64           `json:"memory_percent"`
-		Streams            []string          `json:"streams"`
+		ContainerID     string            `json:"container_id"`
+		ContainerName   string            `json:"container_name"`
+		Host            string            `json:"host"`
+		Port            int               `json:"port"`
+		APIPort         int               `json:"api_port"`
+		Labels          map[string]string `json:"labels"`
+		Forwarded       bool              `json:"forwarded"`
+		VPNContainer    string            `json:"vpn_container,omitempty"`
+		HealthStatus    string            `json:"health_status"`
+		P2PPort         int               `json:"p2p_port,omitempty"`
+		FirstSeen       time.Time         `json:"first_seen"`
+		LastSeen        time.Time         `json:"last_seen"`
+		Draining        bool              `json:"draining"`
+		DrainReason     string            `json:"drain_reason,omitempty"`
+		StreamCount     int               `json:"stream_count"`
+		TotalPeers      int               `json:"total_peers"`
+		TotalSpeedDown  int               `json:"total_speed_down"`
+		TotalSpeedUp    int               `json:"total_speed_up"`
+		LastHealthCheck *time.Time        `json:"last_health_check,omitempty"`
+		LastStreamUsage *time.Time        `json:"last_stream_usage,omitempty"`
+		EngineVariant   string            `json:"engine_variant,omitempty"`
+		Platform        string            `json:"platform,omitempty"`
+		Version         string            `json:"version,omitempty"`
+		ForwardedPort   *int              `json:"forwarded_port,omitempty"`
+		CPUPercent      float64           `json:"cpu_percent"`
+		MemoryUsage     int64             `json:"memory_usage"`
+		MemoryPercent   float64           `json:"memory_percent"`
+		Streams         []string          `json:"streams"`
 	}
 
 	out := make([]engineOut, 0, len(engines))
@@ -222,15 +217,11 @@ func (s *ProxyServer) mgHandleListEngines(w http.ResponseWriter, r *http.Request
 			LastSeen:           e.LastSeen,
 			Draining:           e.Draining,
 			DrainReason:        e.DrainReason,
-			StreamCount:        streamCounts[e.ContainerID],
-			MonitorCount:       monCounts[e.ContainerID],
-			TotalPeers:         e.TotalPeers,
-			TotalSpeedDown:     e.TotalSpeedDown,
-			TotalSpeedUp:       e.TotalSpeedUp,
-			MonitorStreamCount: e.MonitorStreamCount,
-			MonitorSpeedDown:   e.MonitorSpeedDown,
-			MonitorSpeedUp:     e.MonitorSpeedUp,
-			LastHealthCheck:    e.LastHealthCheck,
+			StreamCount:     streamCounts[e.ContainerID],
+			TotalPeers:      e.TotalPeers,
+			TotalSpeedDown:  e.TotalSpeedDown,
+			TotalSpeedUp:    e.TotalSpeedUp,
+			LastHealthCheck: e.LastHealthCheck,
 			LastStreamUsage:    e.LastStreamUsage,
 			EngineVariant:      e.EngineVariant,
 			Platform:           e.Platform,
@@ -1271,9 +1262,8 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 	totalCapacity := len(engines)
 	usedCapacity := 0
 	streamCounts := s.st.GetStreamCounts()
-	monCounts := s.st.GetMonitorCounts()
 	for _, e := range engines {
-		if streamCounts[e.ContainerID]+monCounts[e.ContainerID] > 0 {
+		if streamCounts[e.ContainerID] > 0 {
 			usedCapacity++
 		}
 	}
