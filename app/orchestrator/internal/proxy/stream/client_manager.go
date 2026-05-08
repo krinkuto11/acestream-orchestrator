@@ -189,6 +189,7 @@ func (cm *ClientManager) GetClientList() []map[string]any {
 			"bps":                   rec.BPS,
 			"buffer_seconds_behind": rec.BufferSecondsBehind,
 			"protocol":              rec.LastRequestKind,
+			"is_prebuffering":       rec.IsPrebuffering,
 		})
 	}
 	return out

@@ -505,6 +505,7 @@ const buildSnapshot = (
 
     return {
       engine,
+      engineStreams,
       streamCount: engineStreams.length,
       measuredMbps: measuredDownMbps, // used for sorting
       streamMeasuredDownMbps: toMbps(streamMeasuredDownKbps),
@@ -672,7 +673,7 @@ const buildSnapshot = (
   }
 
   // 3. Process engine nodes with stable staggered lanes
-  normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, measuredDownKbps, measuredUpKbps, assignedTunnel }, index) => {
+  normalizedEngineStats.forEach(({ engine, engineStreams, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, measuredDownKbps, measuredUpKbps, assignedTunnel }, index) => {
     const localIndex = tunnelLocalIndex[assignedTunnel] || 0
     tunnelLocalIndex[assignedTunnel] = localIndex + 1
 
@@ -757,7 +758,6 @@ const buildSnapshot = (
           activeTunnel: sourceNodeId,
           peers: engineStreams.reduce((sum, stream) => sum + (stream.peers || 0), 0),
           targetBitrate: engineStreams[0]?.bitrate || null,
-          monitorStreamCount,
           lifecycle: engineLifecycle,
           variant: engine.engine_variant || 'default',
           forwarded: engine.forwarded,
@@ -885,16 +885,16 @@ const buildSnapshot = (
   const clientStartY = centerY - clientTotalHeight / 2
 
   clientList.forEach((client: any, index: number) => {
-    const cNodeId = `client-${client.id}`
+    const cNodeId = `client-${client.client_id}`
     // Stagger nodes slightly for visual depth and to make them feel "alive"
     const nodeX = clientStartX + (index % 2 === 0 ? 0 : 45)
     const nodeY = clientStartY + (index * clientSpacingY)
     const rawClientBw = (client.bps * 8) / 1_000_000
     const isPrebuffering = Boolean(client.is_prebuffering)
-    
+
     // Retrieve previous client node state
     const prevClientNode = prevState?.nodes.find(n => n.id === cNodeId)
-    
+
     // Treat zero-bitrate clients as inactive to avoid lingering proxy->client pipes.
     const clientIsActive = rawClientBw > 0.05
     const clientBwMbps = smoothBandwidth(rawClientBw, prevClientNode?.data?.bandwidthMbps, clientIsActive)
@@ -905,15 +905,15 @@ const buildSnapshot = (
       position: { x: nodeX, y: nodeY },
       data: {
         kind: 'client',
-        title: client.ip || 'Unknown IP',
-        subtitle: client.ua || 'Generic Player',
+        title: client.ip_address || 'Unknown IP',
+        subtitle: client.user_agent || 'Generic Player',
         health: 'healthy',
         streamCount: 1,
         bandwidthMbps: clientBwMbps,
         metadata: {
-          type: client.type,
+          type: client.protocol,
           totalBytes: client.bytes_sent || 0,
-          connectedAt: new Date(client.connected_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          connectedAt: new Date(client.connected_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         },
       },
     })
@@ -932,7 +932,7 @@ const buildSnapshot = (
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: clientBwMbps,
-        protocol: client.type,
+        protocol: client.protocol,
         flowActive: clientFlowActive,
         isPrebuffering: isPrebuffering,
       },
