@@ -9,7 +9,6 @@ const inputStyle = {
 const selectStyle = { ...inputStyle, cursor: 'pointer', minWidth: 140 }
 
 export function GeneralSettings({
-  apiKey, setApiKey,
   refreshInterval, setRefreshInterval,
   maxEventsDisplay, setMaxEventsDisplay,
   authRequired,
@@ -18,7 +17,6 @@ export function GeneralSettings({
   const { registerSection, unregisterSection, setSectionDirty } = useSettingsForm()
 
   const [initialState, setInitialState] = useState({
-    apiKey: apiKey || '',
     refreshInterval: Number(refreshInterval || 1000),
     maxEventsDisplay: Number(maxEventsDisplay || 100),
   })
@@ -26,13 +24,12 @@ export function GeneralSettings({
 
   useEffect(() => {
     const next = {
-      apiKey: apiKey || '',
       refreshInterval: Number(refreshInterval || 1000),
       maxEventsDisplay: Number(maxEventsDisplay || 100),
     }
     setInitialState(next)
     setDraft(next)
-  }, [apiKey, refreshInterval, maxEventsDisplay])
+  }, [refreshInterval, maxEventsDisplay])
 
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(initialState),
@@ -42,11 +39,9 @@ export function GeneralSettings({
   useEffect(() => {
     const save = async () => {
       const normalized = {
-        apiKey: String(draft.apiKey || '').trim(),
         refreshInterval: Number(draft.refreshInterval || 1000),
         maxEventsDisplay: Number(draft.maxEventsDisplay || 100),
       }
-      setApiKey(normalized.apiKey)
       setRefreshInterval(normalized.refreshInterval)
       setMaxEventsDisplay(normalized.maxEventsDisplay)
       setInitialState(normalized)
@@ -60,7 +55,7 @@ export function GeneralSettings({
 
     registerSection(sectionId, { title: 'General', requiresAuth: false, save, discard })
     return () => unregisterSection(sectionId)
-  }, [draft, initialState, registerSection, setApiKey, setMaxEventsDisplay, setRefreshInterval, setSectionDirty, unregisterSection])
+  }, [draft, initialState, registerSection, setMaxEventsDisplay, setRefreshInterval, setSectionDirty, unregisterSection])
 
   useEffect(() => {
     setSectionDirty(sectionId, dirty)
@@ -70,27 +65,20 @@ export function GeneralSettings({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-soft)' }}>
         <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
-          <span className="label">CONNECTION SETTINGS</span>
-          <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>Configure API access and authentication</div>
+          <span className="label">AUTH STATUS</span>
+          <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>Server-side API key protection (set via API_KEY env var)</div>
         </div>
         <div style={{ padding: '12px 14px' }}>
-          <SettingRow label="API Key" description="Used for protected operations when server authentication is enabled." htmlFor="api-key">
-            <input
-              id="api-key"
-              type="password"
-              value={draft.apiKey}
-              onChange={(e) => setDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
-              placeholder="Enter your API key"
-              style={{ ...inputStyle, minWidth: 240 }}
-            />
-          </SettingRow>
-          <SettingRow label=" " description="">
-            <div style={{ fontSize: 10, color: authRequired ? 'var(--acc-amber)' : 'var(--fg-3)' }}>
-              {authRequired
-                ? '⚠ Auth enforced · API key required for protected endpoints'
-                : '✓ Auth not enforced · API key is optional'}
-            </div>
-          </SettingRow>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--fg-1)' }}>
+            <span style={{
+              display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+              background: authRequired ? 'var(--acc-amber)' : 'var(--acc-green)',
+              flexShrink: 0,
+            }}/>
+            {authRequired
+              ? 'Auth enforced — external API calls require API_KEY. The panel accesses the API automatically via a session cookie.'
+              : 'Auth not enforced — API_KEY env var is not set. All API access is open.'}
+          </div>
         </div>
       </div>
 

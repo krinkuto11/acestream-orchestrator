@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-export function ProbesPage({ orchUrl, apiKey }) {
+export function ProbesPage({ orchUrl }) {
   const navigate = useNavigate()
   const [contentId, setContentId]  = useState('')
   const [n, setN]                  = useState(5)
@@ -18,10 +18,8 @@ export function ProbesPage({ orchUrl, apiKey }) {
     setJobId(null)
 
     try {
-      const headers = { 'Content-Type': 'application/json' }
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
       const res = await fetch(`${orchUrl}/api/v1/vpn/reputation/probe`, {
-        method: 'POST', headers,
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content_id: contentId.trim(), n, selection }),
       })
       const data = await res.json()
@@ -29,7 +27,6 @@ export function ProbesPage({ orchUrl, apiKey }) {
 
       // Subscribe to SSE for live results.
       const url = new URL(`${orchUrl}/api/v1/vpn/reputation/stream`)
-      if (apiKey) url.searchParams.set('api_key', apiKey)
       const es = new EventSource(url.toString())
       esRef.current = es
 

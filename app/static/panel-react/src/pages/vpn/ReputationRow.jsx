@@ -13,7 +13,7 @@ const COLOR_MAP = {
   red:     'var(--acc-red)',
 }
 
-export function ReputationRow({ server, index, orchUrl, apiKey, onAction }) {
+export function ReputationRow({ server, index, orchUrl, onAction }) {
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -24,10 +24,8 @@ export function ReputationRow({ server, index, orchUrl, apiKey, onAction }) {
   const doAction = async (path, body) => {
     setMenuOpen(false)
     try {
-      const headers = { 'Content-Type': 'application/json' }
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
       await fetch(`${orchUrl}/api/v1/vpn/servers/${server.id}/${path}`, {
-        method: 'POST', headers, body: JSON.stringify(body),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
       onAction?.()
     } catch { /* ignore */ }

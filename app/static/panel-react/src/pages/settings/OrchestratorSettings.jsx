@@ -43,7 +43,7 @@ function Pane({ title, description, children }) {
   )
 }
 
-export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
+export function OrchestratorSettings({ orchUrl, authRequired }) {
   const sectionId = 'orchestrator'
   const { registerSection, unregisterSection, setSectionDirty, setSectionSaving } = useSettingsForm()
 
@@ -88,15 +88,11 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
 
   useEffect(() => {
     const save = async () => {
-      if (authRequired && !String(apiKey || '').trim()) {
-        throw new Error('API key required by server for orchestrator settings updates')
-      }
       setSectionSaving(sectionId, true)
       setMessage('')
       setError('')
       try {
         const headers = { 'Content-Type': 'application/json' }
-        if (String(apiKey || '').trim()) headers.Authorization = `Bearer ${String(apiKey).trim()}`
         const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`, {
           method: 'POST',
           headers,
@@ -141,7 +137,7 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
 
     registerSection(sectionId, { title: 'Orchestrator', requiresAuth: true, save, discard })
     return () => unregisterSection(sectionId)
-  }, [apiKey, authRequired, draft, initialState, orchUrl, registerSection, setSectionDirty, setSectionSaving, unregisterSection])
+  }, [authRequired, draft, initialState, orchUrl, registerSection, setSectionDirty, setSectionSaving, unregisterSection])
 
   useEffect(() => { setSectionDirty(sectionId, dirty) }, [dirty, setSectionDirty])
 

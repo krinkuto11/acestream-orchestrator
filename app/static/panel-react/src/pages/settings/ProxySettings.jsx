@@ -65,7 +65,7 @@ function Pane({ title, description, children, actions }) {
   )
 }
 
-export function ProxySettings({ apiKey, orchUrl, authRequired }) {
+export function ProxySettings({ orchUrl, authRequired }) {
   const sectionId = 'proxy'
   const { registerSection, unregisterSection, setSectionDirty, setSectionSaving } = useSettingsForm()
 
@@ -122,15 +122,11 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
 
   useEffect(() => {
     const save = async () => {
-      if (authRequired && !String(apiKey || '').trim()) {
-        throw new Error('API key required by server for proxy settings updates')
-      }
       setSectionSaving(sectionId, true)
       setError('')
       setMessage('')
       try {
         const headers = {}
-        if (String(apiKey || '').trim()) headers.Authorization = `Bearer ${String(apiKey).trim()}`
         const params = new URLSearchParams()
         params.set('initial_data_wait_timeout', String(toNumber(draft.initial_data_wait_timeout, DEFAULTS.initial_data_wait_timeout)))
         params.set('initial_data_check_interval', String(toNumber(draft.initial_data_check_interval, DEFAULTS.initial_data_check_interval)))
@@ -177,7 +173,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
 
     registerSection(sectionId, { title: 'Proxy', requiresAuth: true, save, discard })
     return () => unregisterSection(sectionId)
-  }, [apiKey, authRequired, draft, initialState, orchUrl, registerSection, setSectionDirty, setSectionSaving, unregisterSection])
+  }, [authRequired, draft, initialState, orchUrl, registerSection, setSectionDirty, setSectionSaving, unregisterSection])
 
   useEffect(() => { setSectionDirty(sectionId, dirty) }, [dirty, setSectionDirty])
 

@@ -9,8 +9,6 @@ import { Button } from '@/components/ui/button'
 export function Topbar({
   orchUrl,
   setOrchUrl,
-  apiKey,
-  setApiKey,
   refreshInterval,
   setRefreshInterval,
   isConnected

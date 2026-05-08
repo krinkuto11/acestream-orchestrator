@@ -39,7 +39,7 @@ const EVENT_TYPE_LABELS = {
   system: 'System'
 }
 
-export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
+export function EventsPage({ orchUrl, maxEventsDisplay = 100 }) {
   const [events, setEvents] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -55,7 +55,6 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
   const fetchEvents = useCallback(async () => {
     try {
       setLoading(true)
-      const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
 
       // Fetch events with filter
       const eventsUrl = filterType === 'all'
@@ -63,8 +62,8 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
         : `${orchUrl}/api/v1/events?event_type=${filterType}&limit=${displayLimit}`
 
       const [eventsRes, statsRes] = await Promise.all([
-        fetch(eventsUrl, { headers }),
-        fetch(`${orchUrl}/api/v1/events/stats`, { headers })
+        fetch(eventsUrl),
+        fetch(`${orchUrl}/api/v1/events/stats`)
       ])
 
       if (!eventsRes.ok || !statsRes.ok) {
@@ -83,7 +82,7 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
     } finally {
       setLoading(false)
     }
-  }, [orchUrl, apiKey, filterType, displayLimit])
+  }, [orchUrl, filterType, displayLimit])
 
   useEffect(() => {
     let eventSource = null
@@ -104,9 +103,6 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
       streamUrl.searchParams.set('limit', String(displayLimit))
       if (filterType !== 'all') {
         streamUrl.searchParams.set('event_type', filterType)
-      }
-      if (apiKey) {
-        streamUrl.searchParams.set('api_key', apiKey)
       }
 
       eventSource = new EventSource(streamUrl.toString())
@@ -152,7 +148,7 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
         eventSource.close()
       }
     }
-  }, [orchUrl, apiKey, filterType, displayLimit, fetchEvents])
+  }, [orchUrl, filterType, displayLimit, fetchEvents])
 
   const formatTimestamp = (timestamp) => {
     try {

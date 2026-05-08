@@ -82,7 +82,7 @@ const resolveTimestamp = (value) => {
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed
 }
 
-export function MetricsPage({ apiKey, orchUrl }) {
+export function MetricsPage({ orchUrl }) {
   const WINDOW_OPTIONS = [
     { label: '5m', value: 300 },
     { label: '15m', value: 900 },
@@ -187,12 +187,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
 
   const fetchSnapshot = useCallback(async () => {
     try {
-      const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-
-      const response = await fetch(`${orchUrl}/api/v1/metrics/dashboard?window_seconds=${windowSeconds}&max_points=360`, { headers })
+      const response = await fetch(`${orchUrl}/api/v1/metrics/dashboard?window_seconds=${windowSeconds}&max_points=360`)
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }
@@ -204,7 +199,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
     } finally {
       setLoading(false)
     }
-  }, [orchUrl, apiKey, windowSeconds, applySnapshot])
+  }, [orchUrl, windowSeconds, applySnapshot])
 
   useEffect(() => {
     let eventSource = null
@@ -224,9 +219,6 @@ export function MetricsPage({ apiKey, orchUrl }) {
       const streamUrl = new URL(`${orchUrl}/api/v1/metrics/stream`)
       streamUrl.searchParams.set('window_seconds', String(windowSeconds))
       streamUrl.searchParams.set('max_points', '360')
-      if (apiKey) {
-        streamUrl.searchParams.set('api_key', apiKey)
-      }
 
       eventSource = new EventSource(streamUrl.toString())
 
@@ -269,7 +261,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
         eventSource.close()
       }
     }
-  }, [orchUrl, apiKey, windowSeconds, fetchSnapshot, applySnapshot])
+  }, [orchUrl, windowSeconds, fetchSnapshot, applySnapshot])
 
   const labels = history.timestamps.map(ts => ts.toLocaleTimeString())
   const chartData = (label, data, borderColor, backgroundColor) => ({

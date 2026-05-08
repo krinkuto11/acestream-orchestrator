@@ -32,7 +32,7 @@ ChartJS.register(
   Legend
 )
 
-function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {
+function StreamCard({ stream, orchUrl, onStopStream, onDeleteEngine, debugMode }) {
   const [isOpen, setIsOpen] = useState(false)
   const [stats, setStats] = useState([])
   const [loading, setLoading] = useState(false)
@@ -42,18 +42,12 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
 
   const fetchStats = useCallback(async () => {
     if (!stream || !isOpen) return
-    
+
     setLoading(true)
     try {
       const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-      const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      
       const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
-        { headers }
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`
       )
       
       if (response.ok) {
@@ -65,22 +59,16 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
     } finally {
       setLoading(false)
     }
-  }, [stream, orchUrl, apiKey, isOpen])
+  }, [stream, orchUrl, isOpen])
 
   const fetchExtendedStats = useCallback(async () => {
     if (!stream || !isOpen) return
-    
+
     setExtendedStatsLoading(true)
     setExtendedStatsError(null)
     try {
-      const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      
       const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/extended-stats`,
-        { headers }
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/extended-stats`
       )
       
       if (response.ok) {
@@ -95,7 +83,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
     } finally {
       setExtendedStatsLoading(false)
     }
-  }, [stream, orchUrl, apiKey, isOpen])
+  }, [stream, orchUrl, isOpen])
 
   useEffect(() => {
     if (isOpen) {
@@ -183,10 +171,9 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
               {stream.id.slice(0, 16)}...
             </h3>
             <div className="mt-2">
-              <StreamProgressBar 
-                streamId={stream.id} 
-                orchUrl={orchUrl} 
-                apiKey={apiKey} 
+              <StreamProgressBar
+                streamId={stream.id}
+                orchUrl={orchUrl}
                 clientRunway={(() => {
                   const clients = stream.clients || []
                   if (clients.length === 0) return 0
@@ -419,7 +406,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
   )
 }
 
-function StreamList({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {
+function StreamList({ streams, orchUrl, onStopStream, onDeleteEngine, debugMode }) {
   return (
     <div>
       <h2 className="text-2xl font-semibold mb-6">Active Streams ({streams.length})</h2>
@@ -435,7 +422,6 @@ function StreamList({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, de
             key={stream.id}
             stream={stream}
             orchUrl={orchUrl}
-            apiKey={apiKey}
             onStopStream={onStopStream}
             onDeleteEngine={onDeleteEngine}
             debugMode={debugMode}

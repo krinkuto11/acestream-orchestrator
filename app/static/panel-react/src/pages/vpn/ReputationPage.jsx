@@ -9,7 +9,7 @@ import { useRecentProbes } from './hooks/useRecentProbes'
 
 const normalizeProvider = (provider) => String(provider || '').trim().toLowerCase()
 
-export function ReputationPage({ orchUrl, apiKey, vpnNodes = [] }) {
+export function ReputationPage({ orchUrl, vpnNodes = [] }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [vpnSettings, setVpnSettings] = useState(null)
 
@@ -48,9 +48,7 @@ export function ReputationPage({ orchUrl, apiKey, vpnNodes = [] }) {
 
     const fetchVpnSettings = async () => {
       try {
-        const headers = {}
-        if (apiKey) headers.Authorization = `Bearer ${apiKey}`
-        const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, { headers })
+        const response = await fetch(`${orchUrl}/api/v1/settings/vpn`)
         if (!response.ok) return
         const payload = await response.json().catch(() => ({}))
         if (!cancelled) setVpnSettings(payload)
@@ -63,7 +61,7 @@ export function ReputationPage({ orchUrl, apiKey, vpnNodes = [] }) {
     return () => {
       cancelled = true
     }
-  }, [orchUrl, apiKey])
+  }, [orchUrl])
 
   const hasProtonCredentials = useMemo(() => {
     const credentials = Array.isArray(vpnSettings?.credentials) ? vpnSettings.credentials : []
@@ -86,17 +84,16 @@ export function ReputationPage({ orchUrl, apiKey, vpnNodes = [] }) {
   }, [filter, hasProtonCredentials])
 
   const { items, nextCursor, totalMatched, stats, loading, loadMore, refetch } = useVpnServers({
-    orchUrl, apiKey, filter: queryFilter,
+    orchUrl, filter: queryFilter,
   })
 
-  const { probes } = useRecentProbes({ orchUrl, apiKey })
+  const { probes } = useRecentProbes({ orchUrl })
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <ReputationHeaderBar
         stats={stats}
         orchUrl={orchUrl}
-        apiKey={apiKey}
         onRefresh={refetch}
         showProtonRefresh={hasProtonCredentials}
       />
@@ -118,7 +115,6 @@ export function ReputationPage({ orchUrl, apiKey, vpnNodes = [] }) {
           onLoadMore={loadMore}
           hasMore={!!nextCursor}
           orchUrl={orchUrl}
-          apiKey={apiKey}
           onAction={refetch}
         />
         <ReputationRightRail

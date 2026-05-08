@@ -115,7 +115,7 @@ func (s *ProxyServer) registerSSERoutes() {
 
 // handleSSEVPNReputation streams vpn.* events to the frontend reputation table.
 func (s *ProxyServer) handleSSEVPNReputation(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
+	if !s.sseAPIKeyOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -158,10 +158,16 @@ func sseHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Accel-Buffering", "no")
 }
 
-func sseAPIKeyOK(r *http.Request) bool {
+func (s *ProxyServer) sseAPIKeyOK(r *http.Request) bool {
 	key := config.C.Load().APIKey
 	if key == "" {
 		return true
+	}
+	// Panel session cookie set when the browser loads /panel/.
+	if cookie, err := r.Cookie("ace_panel_session"); err == nil {
+		if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(s.panelToken)) == 1 {
+			return true
+		}
 	}
 	kb := []byte(key)
 	match := func(provided string) bool {
@@ -209,7 +215,7 @@ func writeSSEKeepAlive(w http.ResponseWriter) bool {
 // ─── /api/v1/events/stream  &  /api/v1/events/live ───────────────────────────
 
 func (s *ProxyServer) handleSSEEventsStream(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
+	if !s.sseAPIKeyOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -259,7 +265,7 @@ func (s *ProxyServer) handleSSEEventsStream(w http.ResponseWriter, r *http.Reque
 // handleSSEEventsLive serves the EventsPage which expects "events_snapshot"
 // events carrying a log of recent system events (not full state syncs).
 func (s *ProxyServer) handleSSEEventsLive(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
+	if !s.sseAPIKeyOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -303,7 +309,7 @@ func (s *ProxyServer) handleSSEEventsLive(w http.ResponseWriter, r *http.Request
 // ─── /api/v1/metrics/stream ───────────────────────────────────────────────────
 
 func (s *ProxyServer) handleSSEMetricsStream(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
+	if !s.sseAPIKeyOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -342,7 +348,7 @@ func (s *ProxyServer) handleSSEMetricsStream(w http.ResponseWriter, r *http.Requ
 // ─── /api/v1/containers/{id}/logs/stream ────────────────────────────────────
 
 func (s *ProxyServer) handleSSEContainerLogs(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
+	if !s.sseAPIKeyOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -388,7 +394,7 @@ func (s *ProxyServer) handleSSEContainerLogs(w http.ResponseWriter, r *http.Requ
 // ─── /api/v1/vpn/leases/stream ───────────────────────────────────────────────
 
 func (s *ProxyServer) handleSSEVPNLeases(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
+	if !s.sseAPIKeyOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -420,7 +426,7 @@ func (s *ProxyServer) handleSSEVPNLeases(w http.ResponseWriter, r *http.Request)
 // ─── /api/v1/streams/{id}/details/stream ────────────────────────────────────
 
 func (s *ProxyServer) handleSSEStreamDetails(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
+	if !s.sseAPIKeyOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -463,7 +469,7 @@ func (s *ProxyServer) handleSSEStreamDetails(w http.ResponseWriter, r *http.Requ
 // ─── reprovision status stream ────────────────────────────────────────────────
 
 func (s *ProxyServer) handleSSEReprovisionStatus(w http.ResponseWriter, r *http.Request) {
-	if !sseAPIKeyOK(r) {
+	if !s.sseAPIKeyOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

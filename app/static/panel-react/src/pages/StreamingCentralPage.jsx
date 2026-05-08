@@ -624,7 +624,7 @@ function AlertBanner({ title, message, accent = 'red' }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export function StreamingCentralPage({ engines, streams, vpnStatus, orchestratorStatus, orchUrl, apiKey }) {
+export function StreamingCentralPage({ engines, streams, vpnStatus, orchestratorStatus, orchUrl }) {
   const {
     kpiHistory,
     vpnLeaseSummary,
@@ -655,10 +655,10 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
   }, [engines, streams, vpnStatus, orchestratorStatus, ingestLiveSnapshot])
 
   useEffect(() => {
-    refreshBackendTelemetry({ orchUrl, apiKey })
-    const interval = window.setInterval(() => refreshBackendTelemetry({ orchUrl, apiKey }), 30000)
+    refreshBackendTelemetry({ orchUrl })
+    const interval = window.setInterval(() => refreshBackendTelemetry({ orchUrl }), 30000)
     return () => window.clearInterval(interval)
-  }, [orchUrl, apiKey, refreshBackendTelemetry])
+  }, [orchUrl, refreshBackendTelemetry])
 
   // Metrics SSE
   useEffect(() => {
@@ -671,7 +671,6 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       const url = new URL(`${orchUrl}/api/v1/metrics/stream`)
       url.searchParams.set('window_seconds', '900')
       url.searchParams.set('max_points', '240')
-      if (apiKey) url.searchParams.set('api_key', apiKey)
 
       eventSource = new EventSource(url.toString())
       const handle = (ev) => {
@@ -694,7 +693,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       if (eventSource) eventSource.close()
     }
-  }, [orchUrl, apiKey, setDashboardSnapshot])
+  }, [orchUrl, setDashboardSnapshot])
 
   // VPN leases SSE
   useEffect(() => {
@@ -705,7 +704,6 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       if (typeof window === 'undefined' || !window.EventSource) return
 
       const url = new URL(`${orchUrl}/api/v1/vpn/leases/stream`)
-      if (apiKey) url.searchParams.set('api_key', apiKey)
 
       eventSource = new EventSource(url.toString())
       const handle = (ev) => {
@@ -725,7 +723,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       if (eventSource) eventSource.close()
     }
-  }, [orchUrl, apiKey, setVpnLeaseSummary])
+  }, [orchUrl, setVpnLeaseSummary])
 
   // Events SSE for signal log
   useEffect(() => {
@@ -733,8 +731,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
 
     const fetchEventsSnapshot = async () => {
       try {
-        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
-        const response = await fetch(`${orchUrl}/api/v1/events?limit=30`, { headers })
+        const response = await fetch(`${orchUrl}/api/v1/events?limit=30`)
         if (!response.ok) return
         const payload = await response.json()
         if (Array.isArray(payload)) setEvents(payload)
@@ -749,7 +746,6 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
 
       const url = new URL(`${orchUrl}/api/v1/events/live`)
       url.searchParams.set('limit', '30')
-      if (apiKey) url.searchParams.set('api_key', apiKey)
 
       eventSource = new EventSource(url.toString())
       const handle = (ev) => {
@@ -778,7 +774,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       if (eventSource) eventSource.close()
     }
-  }, [orchUrl, apiKey])
+  }, [orchUrl])
 
   // Container logs SSE
   useEffect(() => {
@@ -789,7 +785,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       if (closed) return
       setContainerLogsLoading({ containerId: selectedEngineId, loading: true })
       if (typeof window === 'undefined' || !window.EventSource) {
-        fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
+        fetchContainerLogs({ orchUrl, containerId: selectedEngineId })
         return
       }
 
@@ -797,7 +793,6 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       url.searchParams.set('tail', '300')
       url.searchParams.set('since_seconds', '1200')
       url.searchParams.set('interval_seconds', '2.5')
-      if (apiKey) url.searchParams.set('api_key', apiKey)
 
       eventSource = new EventSource(url.toString())
       eventSource.addEventListener('container_logs_snapshot', (ev) => {
@@ -817,7 +812,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       if (eventSource) eventSource.close()
     }
-  }, [selectedEngineId, orchUrl, apiKey, fetchContainerLogs, setContainerLogsSnapshot, setContainerLogsLoading, setContainerLogsError])
+  }, [selectedEngineId, orchUrl, fetchContainerLogs, setContainerLogsSnapshot, setContainerLogsLoading, setContainerLogsError])
 
   // ── Derived values ──────────────────────────────────────────────────────────
   const activeStreamsValue = Number(orchestratorStatus?.streams?.active ?? streams?.length ?? 0)

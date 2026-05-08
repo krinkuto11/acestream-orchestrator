@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { SettingsFormProvider, useSettingsForm } from '@/context/SettingsFormContext'
 import { useNotifications } from '@/context/NotificationContext'
 import { GeneralSettings } from './settings/GeneralSettings'
@@ -64,7 +64,6 @@ function SettingsNav({ active, onSelect }) {
 }
 
 function SettingsPageInner({
-  apiKey, setApiKey,
   refreshInterval, setRefreshInterval,
   maxEventsDisplay, setMaxEventsDisplay,
   orchUrl,
@@ -76,11 +75,6 @@ function SettingsPageInner({
   const [savingAll, setSavingAll] = useState(false)
   const [leaveWarningVisible, setLeaveWarningVisible] = useState(false)
   const [pendingSection, setPendingSection] = useState(null)
-
-  const authBlockedSections = useMemo(() => {
-    if (!authRequired || String(apiKey || '').trim()) return []
-    return dirtySections.filter(s => s.requiresAuth)
-  }, [authRequired, apiKey, dirtySections])
 
   const handleNavSelect = useCallback((sectionId) => {
     if (sectionId === activeSection) return
@@ -105,11 +99,6 @@ function SettingsPageInner({
 
   const saveAll = useCallback(async () => {
     if (!dirtySections.length) return
-    if (authBlockedSections.length) {
-      const names = authBlockedSections.map(s => s.title).join(', ')
-      addNotification(`Authentication required to save: ${names}`, 'warning')
-      return
-    }
     setSavingAll(true)
     try {
       for (const section of dirtySections) {
@@ -121,7 +110,7 @@ function SettingsPageInner({
     } finally {
       setSavingAll(false)
     }
-  }, [addNotification, authBlockedSections, dirtySections])
+  }, [addNotification, dirtySections])
 
   useEffect(() => {
     const handler = (e) => {
@@ -132,7 +121,7 @@ function SettingsPageInner({
     return () => window.removeEventListener('beforeunload', handler)
   }, [globalDirty])
 
-  const sharedProps = { apiKey, orchUrl, authRequired }
+  const sharedProps = { orchUrl, authRequired }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 112 }}>
@@ -153,25 +142,25 @@ function SettingsPageInner({
                 {authRequired ? '⚠' : '✓'}
               </span>
               {authRequired
-                ? 'Auth enforced · API key required for protected settings'
-                : 'Auth not enforced · settings save available without API key'}
+                ? 'Auth enforced · external API access requires API_KEY'
+                : 'Auth not enforced · API_KEY env var not set'}
             </div>
           )}
         </div>
         <div style={{ flex: 1 }}/>
         <button
           onClick={saveAll}
-          disabled={!globalDirty || globalSaving || savingAll || authBlockedSections.length > 0}
+          disabled={!globalDirty || globalSaving || savingAll}
           className="tag tag-green"
-          style={{ cursor: !globalDirty || authBlockedSections.length > 0 ? 'not-allowed' : 'pointer', padding: '4px 14px', opacity: !globalDirty ? 0.4 : 1 }}
+          style={{ cursor: !globalDirty ? 'not-allowed' : 'pointer', padding: '4px 14px', opacity: !globalDirty ? 0.4 : 1 }}
         >
           {savingAll ? '⟳ SAVING...' : '✓ SAVE'}
         </button>
         <button
           onClick={saveAll}
-          disabled={!globalDirty || globalSaving || savingAll || authBlockedSections.length > 0}
+          disabled={!globalDirty || globalSaving || savingAll}
           className="tag"
-          style={{ cursor: !globalDirty || authBlockedSections.length > 0 ? 'not-allowed' : 'pointer', padding: '4px 14px', opacity: !globalDirty ? 0.4 : 1 }}
+          style={{ cursor: !globalDirty ? 'not-allowed' : 'pointer', padding: '4px 14px', opacity: !globalDirty ? 0.4 : 1 }}
         >
           SAVE &amp; REPROVISION
         </button>
@@ -184,23 +173,22 @@ function SettingsPageInner({
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
           {activeSection === 'general' && (
             <GeneralSettings
-              apiKey={apiKey} setApiKey={setApiKey}
               refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval}
               maxEventsDisplay={maxEventsDisplay} setMaxEventsDisplay={setMaxEventsDisplay}
               authRequired={authRequired}
             />
           )}
           {activeSection === 'orchestrator' && (
-            <OrchestratorSettings apiKey={apiKey} orchUrl={orchUrl} authRequired={authRequired}/>
+            <OrchestratorSettings orchUrl={orchUrl} authRequired={authRequired}/>
           )}
           {activeSection === 'vpn' && (
-            <VPNSettings apiKey={apiKey} orchUrl={orchUrl} authRequired={authRequired}/>
+            <VPNSettings orchUrl={orchUrl} authRequired={authRequired}/>
           )}
           {activeSection === 'proxy' && (
-            <ProxySettings apiKey={apiKey} orchUrl={orchUrl} authRequired={authRequired}/>
+            <ProxySettings orchUrl={orchUrl} authRequired={authRequired}/>
           )}
           {activeSection === 'backup' && (
-            <BackupSettings apiKey={apiKey} orchUrl={orchUrl}/>
+            <BackupSettings orchUrl={orchUrl}/>
           )}
         </div>
       </div>
@@ -224,11 +212,6 @@ function SettingsPageInner({
               {dirtySections.length} section{dirtySections.length === 1 ? '' : 's'} pending
             </div>
           </div>
-          {authBlockedSections.length > 0 && (
-            <div style={{ fontSize: 10, color: 'var(--acc-red)' }}>
-              API key required: {authBlockedSections.map(s => s.title).join(', ')}
-            </div>
-          )}
           <button
             onClick={discardAll}
             disabled={globalSaving || savingAll}
@@ -239,13 +222,9 @@ function SettingsPageInner({
           </button>
           <button
             onClick={saveAll}
-            disabled={globalSaving || savingAll || authBlockedSections.length > 0}
+            disabled={globalSaving || savingAll}
             className="tag tag-green"
-            style={{
-              cursor: authBlockedSections.length > 0 ? 'not-allowed' : 'pointer',
-              padding: '4px 12px',
-              opacity: globalSaving || savingAll || authBlockedSections.length > 0 ? 0.5 : 1,
-            }}
+            style={{ cursor: 'pointer', padding: '4px 12px', opacity: globalSaving || savingAll ? 0.5 : 1 }}
           >
             {savingAll ? '⟳ SAVING...' : '✓ SAVE ALL'}
           </button>

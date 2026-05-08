@@ -1,7 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 
-export function ReputationHeaderBar({ stats = {}, orchUrl, apiKey, onRefresh, showProtonRefresh = false }) {
+export function ReputationHeaderBar({ stats = {}, orchUrl, onRefresh, showProtonRefresh = false }) {
   const navigate = useNavigate()
 
   const total   = Object.values(stats.by_source || {}).reduce((a, b) => a + b, 0)
@@ -13,9 +13,7 @@ export function ReputationHeaderBar({ stats = {}, orchUrl, apiKey, onRefresh, sh
 
   const handleRefreshProton = async () => {
     try {
-      const headers = { 'Content-Type': 'application/json' }
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-      await fetch(`${orchUrl}/api/v1/vpn/proton/refresh`, { method: 'POST', headers })
+      await fetch(`${orchUrl}/api/v1/vpn/proton/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
       onRefresh?.()
     } catch { /* ignore */ }
   }

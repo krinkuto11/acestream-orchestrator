@@ -5,16 +5,14 @@ import { RepFlagBadges } from '../../components/reputation/RepFlagBadges'
 import { LoadBar } from '../../components/reputation/LoadBar'
 import { useServerDetail } from './hooks/useServerDetail'
 
-export function ServerDetailPage({ orchUrl, apiKey }) {
+export function ServerDetailPage({ orchUrl }) {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { detail, loading, error, refetch } = useServerDetail({ orchUrl, apiKey, serverId: id })
+  const { detail, loading, error, refetch } = useServerDetail({ orchUrl, serverId: id })
 
   const doAction = async (path, body) => {
     try {
-      const headers = { 'Content-Type': 'application/json' }
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-      await fetch(`${orchUrl}/api/v1/vpn/servers/${id}/${path}`, { method: 'POST', headers, body: JSON.stringify(body) })
+      await fetch(`${orchUrl}/api/v1/vpn/servers/${id}/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       refetch()
     } catch { /* ignore */ }
   }

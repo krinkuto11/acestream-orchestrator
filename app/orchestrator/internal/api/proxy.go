@@ -2,13 +2,15 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
+	mathrand "math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -36,8 +38,9 @@ var fileIndexRE = regexp.MustCompile(`^\d+(,\d+)*$`)
 
 // ProxyServer serves the proxy streaming API on :8000.
 type ProxyServer struct {
-	hub      *stream.Hub
-	st       *state.Store
+	hub        *stream.Hub
+	panelToken string // random token set at startup; grants panel-session cookie auth
+	st         *state.Store
 	settings *persistence.SettingsStore
 	mux      *http.ServeMux
 
@@ -66,8 +69,13 @@ func NewProxyServer(
 	vpnMgr *vpnpkg.LifecycleManager,
 	repEngine *vpnpkg.ReputationEngine,
 ) *ProxyServer {
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		panic("failed to generate panel session token: " + err.Error())
+	}
 	s := &ProxyServer{
 		hub:        hub,
+		panelToken: hex.EncodeToString(tokenBytes),
 		st:         st,
 		settings:   settings,
 		ctrl:       ctrl,
@@ -88,6 +96,16 @@ func (s *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
+func (s *ProxyServer) setPanelCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ace_panel_session",
+		Value:    s.panelToken,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
 func (s *ProxyServer) registerRoutes() {
 	s.mux.HandleFunc("/ace/getstream", withTelemetry("TS", s.handleGetStream))
 	s.mux.HandleFunc("/ace/manifest.m3u8", withTelemetry("HLS", s.handleHLSManifest))
@@ -95,18 +113,18 @@ func (s *ProxyServer) registerRoutes() {
 	s.mux.HandleFunc("/ace/hls/segment.ts", withTelemetry("HLS", s.handleHLSSegment))
 	s.mux.HandleFunc("/ace/hls/", withTelemetry("HLS", s.handleHLSSegmentLegacy))
 
-	s.mux.HandleFunc("/internal/proxy/stop", requireAPIKey(s.handleInternalStop))
-	s.mux.HandleFunc("/internal/proxy/swap", requireAPIKey(s.handleInternalSwap))
+	s.mux.HandleFunc("/internal/proxy/stop", s.requireAPIKey(s.handleInternalStop))
+	s.mux.HandleFunc("/internal/proxy/swap", s.requireAPIKey(s.handleInternalSwap))
 
 	s.mux.HandleFunc("/proxy/health", s.handleHealth)
 
 	s.mux.Handle("/metrics/proxy", promhttp.Handler())
 
-	s.mux.HandleFunc("/debug/pprof/", requireAPIKey(pprof.Index))
-	s.mux.HandleFunc("/debug/pprof/cmdline", requireAPIKey(pprof.Cmdline))
-	s.mux.HandleFunc("/debug/pprof/profile", requireAPIKey(pprof.Profile))
-	s.mux.HandleFunc("/debug/pprof/symbol", requireAPIKey(pprof.Symbol))
-	s.mux.HandleFunc("/debug/pprof/trace", requireAPIKey(pprof.Trace))
+	s.mux.HandleFunc("/debug/pprof/", s.requireAPIKey(pprof.Index))
+	s.mux.HandleFunc("/debug/pprof/cmdline", s.requireAPIKey(pprof.Cmdline))
+	s.mux.HandleFunc("/debug/pprof/profile", s.requireAPIKey(pprof.Profile))
+	s.mux.HandleFunc("/debug/pprof/symbol", s.requireAPIKey(pprof.Symbol))
+	s.mux.HandleFunc("/debug/pprof/trace", s.requireAPIKey(pprof.Trace))
 
 	s.registerManagementRoutes()
 
@@ -540,7 +558,7 @@ func (s *ProxyServer) selectEngineWithWait(ctx context.Context) (engineSelection
 			// a new engine registered; add a small randomized jitter before
 			// retrying to prevent a thundering herd where all waiters slam
 			// the same new engine API in the same millisecond.
-			jitter := time.Duration(rand.Intn(200)+50) * time.Millisecond
+			jitter := time.Duration(mathrand.Intn(200)+50) * time.Millisecond
 			select {
 			case <-ctx.Done():
 				undoNudge()
@@ -699,14 +717,21 @@ func decodeJSON(r io.Reader, v any) error {
 	return json.NewDecoder(r).Decode(v)
 }
 
-func requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
+func (s *ProxyServer) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := config.C.Load().APIKey
 		if key == "" {
 			next(w, r)
 			return
 		}
-		// Accept X-API-Key header, Authorization: Bearer <token>, or ?key= query param.
+		// Panel session cookie: set when the browser loads /panel/, grants full access.
+		if cookie, err := r.Cookie("ace_panel_session"); err == nil {
+			if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(s.panelToken)) == 1 {
+				next(w, r)
+				return
+			}
+		}
+		// External callers: X-API-Key header, Authorization: Bearer <token>, or ?key= query param.
 		provided := r.Header.Get("X-API-Key")
 		if provided == "" {
 			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {

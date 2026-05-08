@@ -56,14 +56,10 @@ function formatUptime(startedAt) {
   return `${seconds}s`
 }
 
-function buildStreamDetailsSseUrl({ orchUrl, streamId, apiKey }) {
+function buildStreamDetailsSseUrl({ orchUrl, streamId }) {
   const streamUrl = new URL(`${orchUrl}/api/v1/streams/${encodeURIComponent(streamId)}/details/stream`)
   streamUrl.searchParams.set('since_seconds', '1800')
   streamUrl.searchParams.set('interval_seconds', '1.5')
-  if (apiKey) {
-    streamUrl.searchParams.set('api_key', apiKey)
-    streamUrl.searchParams.set('token', apiKey)
-  }
   return streamUrl
 }
 
@@ -363,7 +359,6 @@ function StreamCard({
   streamSessionKey,
   eventMarkers = [],
   orchUrl,
-  apiKey,
   onStopStream,
   onDeleteEngine,
   isSelected,
@@ -437,7 +432,7 @@ function StreamCard({
       if (isExpanded) {
         setDetailsLoading(true)
       }
-      eventSource = new EventSource(buildStreamDetailsSseUrl({ orchUrl, streamId, apiKey }).toString())
+      eventSource = new EventSource(buildStreamDetailsSseUrl({ orchUrl, streamId }).toString())
 
       const handleSse = (event) => {
         try {
@@ -524,7 +519,7 @@ function StreamCard({
         eventSource.close()
       }
     }
-  }, [isExpanded, stream?.id, stream?.status, orchUrl, apiKey])
+  }, [isExpanded, stream?.id, stream?.status, orchUrl])
 
 
   const displayId = getStreamDisplayId(localStream)
@@ -652,7 +647,7 @@ function StreamCard({
   )
 }
 
-function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }) {
+function StreamsTable({ streams, orchUrl, onStopStream, onDeleteEngine }) {
   const canonicalStreams = useMemo(() => {
     const groups = new Map()
     ;(Array.isArray(streams) ? streams : []).forEach((stream) => {
@@ -819,7 +814,6 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
       if (commandUrls.length === 0) return
 
       const headers = { 'Content-Type': 'application/json' }
-      if (apiKey) headers.Authorization = `Bearer ${apiKey}`
       const response = await fetch(`${orchUrl}/api/v1/streams/batch-stop`, {
         method: 'POST',
         headers,
@@ -881,7 +875,6 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
                 streamSessionKey={streamSessionKey}
                 eventMarkers={eventMarkers}
                 orchUrl={orchUrl}
-                apiKey={apiKey}
                 onStopStream={onStopStream}
                 onDeleteEngine={onDeleteEngine}
                 isSelected={selectedStreams.has(selectionKey)}
@@ -920,7 +913,6 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
                 streamSessionKey={streamSessionKey}
                 eventMarkers={eventMarkers}
                 orchUrl={orchUrl}
-                apiKey={apiKey}
                 onStopStream={onStopStream}
                 onDeleteEngine={onDeleteEngine}
               />

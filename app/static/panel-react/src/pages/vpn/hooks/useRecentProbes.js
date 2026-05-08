@@ -1,18 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
 
-export function useRecentProbes({ orchUrl, apiKey }) {
+export function useRecentProbes({ orchUrl }) {
   const [probes, setProbes] = useState([])
 
   const fetch_ = useCallback(async () => {
     try {
-      const headers = {}
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-      const res = await fetch(`${orchUrl}/api/v1/vpn/reputation/recent-probes`, { headers })
+      const res = await fetch(`${orchUrl}/api/v1/vpn/reputation/recent-probes`)
       if (!res.ok) return
       const data = await res.json()
       setProbes(data.items || [])
     } catch { /* ignore */ }
-  }, [orchUrl, apiKey])
+  }, [orchUrl])
 
   useEffect(() => {
     fetch_()
@@ -20,7 +18,6 @@ export function useRecentProbes({ orchUrl, apiKey }) {
     return () => clearInterval(t)
   }, [fetch_])
 
-  // Prepend on SSE event.
   const prependProbe = useCallback(probe => {
     setProbes(prev => [probe, ...prev].slice(0, 10))
   }, [])

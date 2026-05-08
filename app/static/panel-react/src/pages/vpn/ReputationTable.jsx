@@ -17,7 +17,7 @@ const COLS = [
   { key: 'menu',       label: '·',       width: 36,  sortKey: null },
 ]
 
-export function ReputationTable({ items, loading, sort, dir, onSort, onLoadMore, hasMore, orchUrl, apiKey, onAction }) {
+export function ReputationTable({ items, loading, sort, dir, onSort, onLoadMore, hasMore, orchUrl, onAction }) {
   const sentinel = useRef(null)
 
   // Infinite scroll via IntersectionObserver.
@@ -75,7 +75,6 @@ export function ReputationTable({ items, loading, sort, dir, onSort, onLoadMore,
           server={server}
           index={i}
           orchUrl={orchUrl}
-          apiKey={apiKey}
           onAction={onAction}
         />
       ))}

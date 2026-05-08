@@ -245,7 +245,7 @@ function SettingField({ label, desc, value, onChange, type = 'text', disabled })
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {
+export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetchJSON }) {
   const { addNotification } = useNotifications()
   const [activeTab, setActiveTab] = useState('rack')
 
@@ -339,12 +339,12 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       await Promise.all([
         fetchJSON(`${orchUrl}/api/v1/settings/engine`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(settingsPayload),
         }),
         fetchJSON(`${orchUrl}/api/v1/engine/config`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(configPayload),
         })
       ])
@@ -356,7 +356,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     } finally {
       setSavingSettings(false)
     }
-  }, [orchUrl, fetchJSON, engineSettings, apiKey, addNotification])
+  }, [orchUrl, fetchJSON, engineSettings, addNotification])
 
   const healthy = engines.filter(e => e.health_status === 'healthy').length
   const unhealthy = engines.filter(e => e.health_status === 'unhealthy').length

@@ -160,7 +160,7 @@ function Pane({ title, description, children, actions }) {
   )
 }
 
-export function VPNSettings({ apiKey, orchUrl, authRequired }) {
+export function VPNSettings({ orchUrl, authRequired }) {
   const sectionId = 'vpn'
   const { registerSection, unregisterSection, setSectionDirty, setSectionSaving } = useSettingsForm()
 
@@ -297,15 +297,11 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
   useEffect(() => {
     const save = async () => {
-      if (authRequired && !String(apiKey || '').trim()) {
-        throw new Error('API key required by server for VPN settings updates')
-      }
       setSectionSaving(sectionId, true)
       setError('')
       setMessage('')
       try {
         const headers = { 'Content-Type': 'application/json' }
-        if (String(apiKey || '').trim()) headers.Authorization = `Bearer ${String(apiKey).trim()}`
         const payload = {
           enabled: Boolean(draft.enabled),
           api_port: toNumber(draft.api_port, DEFAULTS.api_port),
@@ -375,7 +371,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
     registerSection(sectionId, { title: 'VPN', requiresAuth: true, save, discard })
     return () => unregisterSection(sectionId)
-  }, [apiKey, authRequired, credentials, draft, initialState, orchUrl, registerSection, setSectionDirty, setSectionSaving, unregisterSection])
+  }, [authRequired, credentials, draft, initialState, orchUrl, registerSection, setSectionDirty, setSectionSaving, unregisterSection])
 
   useEffect(() => { setSectionDirty(sectionId, dirty) }, [dirty, setSectionDirty])
 
@@ -483,19 +479,13 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   }
 
   const refreshServersNow = async () => {
-    if (authRequired && !String(apiKey || '').trim()) {
-      setError('API key required by server for manual VPN server refresh')
-      return
-    }
     setRefreshingServers(true)
     setError('')
     setMessage('')
     try {
       const refreshSource = String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source)
-      const headers = { 'Content-Type': 'application/json' }
-      if (String(apiKey || '').trim()) headers.Authorization = `Bearer ${String(apiKey).trim()}`
       const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh`, {
-        method: 'POST', headers,
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           source: refreshSource,
           gluetun_json_mode: draft.vpn_servers_gluetun_json_mode,

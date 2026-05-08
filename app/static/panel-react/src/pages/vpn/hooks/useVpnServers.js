@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
-export function useVpnServers({ orchUrl, apiKey, filter = {} }) {
+export function useVpnServers({ orchUrl, filter = {} }) {
   const [items, setItems] = useState([])
   const [nextCursor, setNextCursor] = useState(null)
   const [totalMatched, setTotalMatched] = useState(0)
@@ -27,9 +27,7 @@ export function useVpnServers({ orchUrl, apiKey, filter = {} }) {
     setLoading(true)
     setError(null)
     try {
-      const headers = {}
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-      const res = await fetch(buildUrl(cursor), { headers })
+      const res = await fetch(buildUrl(cursor))
       if (!res.ok) throw new Error(`${res.status}`)
       const data = await res.json()
       if (cursor) {
@@ -45,9 +43,8 @@ export function useVpnServers({ orchUrl, apiKey, filter = {} }) {
     } finally {
       setLoading(false)
     }
-  }, [buildUrl, apiKey])
+  }, [buildUrl])
 
-  // Refetch on filter change.
   useEffect(() => {
     fetchRef.current = fetchServers
     fetchServers()
@@ -57,17 +54,13 @@ export function useVpnServers({ orchUrl, apiKey, filter = {} }) {
     if (nextCursor && !loading) fetchServers(nextCursor)
   }, [nextCursor, loading, fetchServers])
 
-  // Patch a single item in-place (for SSE updates).
   const patchItem = useCallback((id, patch) => {
     setItems(prev => prev.map(item => item.id === id ? { ...item, ...patch } : item))
   }, [])
 
-  // Subscribe to SSE reputation stream.
   useEffect(() => {
     if (!orchUrl) return
     const url = new URL(`${orchUrl}/api/v1/vpn/reputation/stream`)
-    if (apiKey) url.searchParams.set('api_key', apiKey)
-
     const es = new EventSource(url.toString())
 
     const handleEvent = (type, handler) => {
@@ -91,12 +84,10 @@ export function useVpnServers({ orchUrl, apiKey, filter = {} }) {
         score_color: d.score_color,
       })
     })
-    handleEvent('vpn.probe.completed', () => {
-      // Bump recent-probes section via rerender; actual data fetched by useRecentProbes.
-    })
+    handleEvent('vpn.probe.completed', () => {})
 
     return () => es.close()
-  }, [orchUrl, apiKey, patchItem])
+  }, [orchUrl, patchItem])
 
   return { items, nextCursor, totalMatched, stats, loading, error, loadMore, patchItem, refetch: () => fetchServers() }
 }

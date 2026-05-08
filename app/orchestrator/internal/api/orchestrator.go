@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -86,7 +87,7 @@ func orchAPIKeyMiddleware(next http.Handler) http.Handler {
 				provided = strings.TrimPrefix(auth, "Bearer ")
 			}
 		}
-		if provided != key {
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(key)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}

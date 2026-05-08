@@ -85,7 +85,7 @@ function getStreamPeers(s) {
   return typeof s?.peers === 'number' ? s.peers : '—'
 }
 
-export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {
+export function StreamsPage({ streams, orchUrl, onStopStream, onDeleteEngine, debugMode }) {
   const active = streams.filter(s => {
     const st = String(s.status || '').toLowerCase()
     return st === 'started' || st === 'playing' || st === 'prebuf' || st === 'allocating'

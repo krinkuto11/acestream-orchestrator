@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 
-export function useServerDetail({ orchUrl, apiKey, serverId }) {
+export function useServerDetail({ orchUrl, serverId }) {
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -10,9 +10,7 @@ export function useServerDetail({ orchUrl, apiKey, serverId }) {
     setLoading(true)
     setError(null)
     try {
-      const headers = {}
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-      const res = await fetch(`${orchUrl}/api/v1/vpn/servers/${encodeURIComponent(serverId)}/detail`, { headers })
+      const res = await fetch(`${orchUrl}/api/v1/vpn/servers/${encodeURIComponent(serverId)}/detail`)
       if (!res.ok) throw new Error(`${res.status}`)
       setDetail(await res.json())
     } catch (err) {
@@ -20,7 +18,7 @@ export function useServerDetail({ orchUrl, apiKey, serverId }) {
     } finally {
       setLoading(false)
     }
-  }, [orchUrl, apiKey, serverId])
+  }, [orchUrl, serverId])
 
   useEffect(() => { fetch_() }, [fetch_])
 

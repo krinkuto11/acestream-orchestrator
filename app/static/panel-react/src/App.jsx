@@ -143,7 +143,6 @@ function AppContent() {
     ? window.location.origin
     : 'http://localhost:8000'
 
-  const [apiKey, setApiKey] = useLocalStorage('orch_apikey', '')
   const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 1000)
   const [maxEventsDisplay, setMaxEventsDisplay] = useLocalStorage('max_events_display', 100)
 
@@ -158,12 +157,10 @@ function AppContent() {
   const isTopologyPage = location.pathname === '/routing-topology'
 
   const fetchJSON = useCallback(async (url, options = {}) => {
-    const headers = { ...options.headers }
-    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-    const response = await fetch(url, { ...options, headers })
+    const response = await fetch(url, options)
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
     return response.json()
-  }, [apiKey])
+  }, [])
 
   const fetchData = useCallback(async () => {
     try {
@@ -272,7 +269,6 @@ function AppContent() {
       }
 
       const streamUrl = new URL(`${orchUrl}/api/v1/events/stream`)
-      if (apiKey) streamUrl.searchParams.set('api_key', apiKey)
 
       eventSource = new EventSource(streamUrl.toString())
       eventSource.onopen = () => setIsConnected(true)
@@ -303,7 +299,7 @@ function AppContent() {
       }
       if (eventSource) eventSource.close()
     }
-  }, [orchUrl, apiKey, fetchData, refreshInterval])
+  }, [orchUrl, fetchData, refreshInterval])
 
   const handleDeleteEngine = useCallback(async (containerId) => {
     if (!window.confirm('Are you sure you want to delete this engine?')) return
@@ -374,27 +370,27 @@ function AppContent() {
                 <StreamingCentralPage
                   engines={engines} streams={streams}
                   vpnStatus={vpnStatus} orchestratorStatus={orchestratorStatus}
-                  orchUrl={orchUrl} apiKey={apiKey}
+                  orchUrl={orchUrl}
                 />
               }/>
               <Route path="/engines" element={
                 <EnginesPage
                   engines={engines} onDeleteEngine={handleDeleteEngine}
-                  vpnStatus={vpnStatus} orchUrl={orchUrl} apiKey={apiKey} fetchJSON={fetchJSON}
+                  vpnStatus={vpnStatus} orchUrl={orchUrl} fetchJSON={fetchJSON}
                 />
               }/>
               <Route path="/streams" element={
                 <StreamsPage
-                  streams={streams} orchUrl={orchUrl} apiKey={apiKey}
+                  streams={streams} orchUrl={orchUrl}
                   onStopStream={handleStopStream} onDeleteEngine={handleDeleteEngine}
                   debugMode={orchestratorStatus?.config?.debug_mode || false}
                 />
               }/>
               <Route path="/events" element={
-                <EventsPage orchUrl={orchUrl} apiKey={apiKey} maxEventsDisplay={maxEventsDisplay}/>
+                <EventsPage orchUrl={orchUrl} maxEventsDisplay={maxEventsDisplay}/>
               }/>
               <Route path="/metrics" element={
-                <MetricsPage apiKey={apiKey} orchUrl={orchUrl}/>
+                <MetricsPage orchUrl={orchUrl}/>
               }/>
               <Route path="/routing-topology" element={
                 <RoutingTopologyPage
@@ -404,7 +400,6 @@ function AppContent() {
               }/>
               <Route path="/settings" element={
                 <SettingsPage
-                  apiKey={apiKey} setApiKey={setApiKey}
                   refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval}
                   maxEventsDisplay={maxEventsDisplay} setMaxEventsDisplay={setMaxEventsDisplay}
                   orchUrl={orchUrl}
@@ -412,15 +407,15 @@ function AppContent() {
               }/>
               <Route path="/vpn" element={
                 <ReputationPage
-                  orchUrl={orchUrl} apiKey={apiKey}
+                  orchUrl={orchUrl}
                   vpnNodes={Array.isArray(vpnStatus?.vpn_nodes) ? vpnStatus.vpn_nodes : []}
                 />
               }/>
               <Route path="/vpn/servers/:id" element={
-                <ServerDetailPage orchUrl={orchUrl} apiKey={apiKey}/>
+                <ServerDetailPage orchUrl={orchUrl}/>
               }/>
               <Route path="/vpn/probes" element={
-                <ProbesPage orchUrl={orchUrl} apiKey={apiKey}/>
+                <ProbesPage orchUrl={orchUrl}/>
               }/>
             </Routes>
           )}

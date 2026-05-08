@@ -38,106 +38,106 @@ func (s *ProxyServer) registerManagementRoutes() {
 	s.mux.HandleFunc("GET /api/v1/engines/stats/total", s.mgHandleEngineStatsTotal)
 	s.mux.HandleFunc("GET /api/v1/engines/stats/{id}", s.mgHandleEngineStatsSingle)
 	s.mux.HandleFunc("GET /api/v1/engines/{id}", s.mgHandleGetEngine)
-	s.mux.HandleFunc("DELETE /api/v1/engines/{id}", requireAPIKey(s.mgHandleDeleteEngine))
+	s.mux.HandleFunc("DELETE /api/v1/engines/{id}", s.requireAPIKey(s.mgHandleDeleteEngine))
 
 	// ── Containers ────────────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/containers/{id}", s.mgHandleContainerInspect)
-	s.mux.HandleFunc("DELETE /api/v1/containers/{id}", requireAPIKey(s.mgHandleDeleteContainer))
-	s.mux.HandleFunc("GET /api/v1/containers/{id}/logs", requireAPIKey(s.mgHandleContainerLogs))
+	s.mux.HandleFunc("DELETE /api/v1/containers/{id}", s.requireAPIKey(s.mgHandleDeleteContainer))
+	s.mux.HandleFunc("GET /api/v1/containers/{id}/logs", s.requireAPIKey(s.mgHandleContainerLogs))
 
 	// ── Streams ───────────────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/streams", s.mgHandleListStreams)
-	s.mux.HandleFunc("DELETE /api/v1/streams/{id}", requireAPIKey(s.mgHandleDeleteStream))
-	s.mux.HandleFunc("POST /api/v1/streams/batch-stop", requireAPIKey(s.mgHandleBatchStopStreams))
+	s.mux.HandleFunc("DELETE /api/v1/streams/{id}", s.requireAPIKey(s.mgHandleDeleteStream))
+	s.mux.HandleFunc("POST /api/v1/streams/batch-stop", s.requireAPIKey(s.mgHandleBatchStopStreams))
 	s.mux.HandleFunc("GET /api/v1/streams/{id}/stats", s.mgHandleStreamStats)
 	s.mux.HandleFunc("GET /api/v1/streams/{id}/extended-stats", s.mgHandleStreamExtendedStats)
 	s.mux.HandleFunc("GET /api/v1/streams/{id}/livepos", s.mgHandleStreamLivepos)
 
 	// ── Provisioning ──────────────────────────────────────────────────────────
-	s.mux.HandleFunc("POST /api/v1/provision", requireAPIKey(s.mgHandleProvision))
-	s.mux.HandleFunc("POST /api/v1/provision/acestream", requireAPIKey(s.mgHandleProvisionAcestream))
-	s.mux.HandleFunc("POST /api/v1/scale/{demand}", requireAPIKey(s.mgHandleScale))
-	s.mux.HandleFunc("POST /api/v1/gc", requireAPIKey(s.mgHandleGC))
-	s.mux.HandleFunc("POST /api/v1/reconcile", requireAPIKey(s.mgHandleReconcile))
-	s.mux.HandleFunc("GET /api/v1/by-label", requireAPIKey(s.mgHandleByLabel))
+	s.mux.HandleFunc("POST /api/v1/provision", s.requireAPIKey(s.mgHandleProvision))
+	s.mux.HandleFunc("POST /api/v1/provision/acestream", s.requireAPIKey(s.mgHandleProvisionAcestream))
+	s.mux.HandleFunc("POST /api/v1/scale/{demand}", s.requireAPIKey(s.mgHandleScale))
+	s.mux.HandleFunc("POST /api/v1/gc", s.requireAPIKey(s.mgHandleGC))
+	s.mux.HandleFunc("POST /api/v1/reconcile", s.requireAPIKey(s.mgHandleReconcile))
+	s.mux.HandleFunc("GET /api/v1/by-label", s.requireAPIKey(s.mgHandleByLabel))
 
 	// ── VPN nodes ─────────────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/vpn-nodes", s.mgHandleListVPNNodes)
-	s.mux.HandleFunc("POST /api/v1/vpn-nodes/provision", requireAPIKey(s.mgHandleProvisionVPNNode))
-	s.mux.HandleFunc("POST /api/v1/vpn-nodes/{name}/drain", requireAPIKey(s.mgHandleDrainVPNNode))
-	s.mux.HandleFunc("DELETE /api/v1/vpn-nodes/{name}", requireAPIKey(s.mgHandleDestroyVPNNode))
+	s.mux.HandleFunc("POST /api/v1/vpn-nodes/provision", s.requireAPIKey(s.mgHandleProvisionVPNNode))
+	s.mux.HandleFunc("POST /api/v1/vpn-nodes/{name}/drain", s.requireAPIKey(s.mgHandleDrainVPNNode))
+	s.mux.HandleFunc("DELETE /api/v1/vpn-nodes/{name}", s.requireAPIKey(s.mgHandleDestroyVPNNode))
 	s.mux.HandleFunc("GET /api/v1/vpn-credentials", s.mgHandleVPNCredentials)
-	s.mux.HandleFunc("POST /api/v1/vpn-servers/refresh", requireAPIKey(s.mgHandleVPNServersRefresh))
-	s.mux.HandleFunc("POST /api/v1/vpn/servers/refresh", requireAPIKey(s.mgHandleVPNServersRefresh))
+	s.mux.HandleFunc("POST /api/v1/vpn-servers/refresh", s.requireAPIKey(s.mgHandleVPNServersRefresh))
+	s.mux.HandleFunc("POST /api/v1/vpn/servers/refresh", s.requireAPIKey(s.mgHandleVPNServersRefresh))
 
 	// ── VPN settings & status ─────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/vpn/publicip", s.mgHandleVPNPublicIP)
 	s.mux.HandleFunc("GET /api/v1/vpn/status", s.mgHandleVPNStatus)
 	s.mux.HandleFunc("GET /api/v1/vpn/leases", s.mgHandleVPNCredentials)
-	s.mux.HandleFunc("GET /api/v1/vpn/config", requireAPIKey(s.mgHandleGetVPNConfig))
-	s.mux.HandleFunc("POST /api/v1/vpn/config", requireAPIKey(s.mgHandleSetSettingsCategory("vpn_settings")))
-	s.mux.HandleFunc("GET /api/v1/settings/vpn", requireAPIKey(s.mgHandleGetVPNConfig))
-	s.mux.HandleFunc("POST /api/v1/settings/vpn", requireAPIKey(s.mgHandleSetSettingsCategory("vpn_settings")))
-	s.mux.HandleFunc("POST /api/v1/vpn/parse-wireguard", requireAPIKey(s.mgHandleParseWireGuard))
-	s.mux.HandleFunc("POST /api/v1/vpn/proton/refresh", requireAPIKey(s.mgHandleProtonRefresh))
+	s.mux.HandleFunc("GET /api/v1/vpn/config", s.requireAPIKey(s.mgHandleGetVPNConfig))
+	s.mux.HandleFunc("POST /api/v1/vpn/config", s.requireAPIKey(s.mgHandleSetSettingsCategory("vpn_settings")))
+	s.mux.HandleFunc("GET /api/v1/settings/vpn", s.requireAPIKey(s.mgHandleGetVPNConfig))
+	s.mux.HandleFunc("POST /api/v1/settings/vpn", s.requireAPIKey(s.mgHandleSetSettingsCategory("vpn_settings")))
+	s.mux.HandleFunc("POST /api/v1/vpn/parse-wireguard", s.requireAPIKey(s.mgHandleParseWireGuard))
+	s.mux.HandleFunc("POST /api/v1/vpn/proton/refresh", s.requireAPIKey(s.mgHandleProtonRefresh))
 	s.mux.HandleFunc("GET /api/v1/vpn/servers/refresh/status", s.mgHandleVPNServersRefreshStatus)
 
 	// ── VPN Reputation ────────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/vpn/servers", s.mgHandleListVPNRepServers)
 	s.mux.HandleFunc("GET /api/v1/vpn/servers/{id}/detail", s.mgHandleGetVPNRepServer)
 	s.mux.HandleFunc("GET /api/v1/vpn/reputation/recent-probes", s.mgHandleVPNRecentProbes)
-	s.mux.HandleFunc("POST /api/v1/vpn/reputation/probe", requireAPIKey(s.mgHandleVPNManualProbe))
+	s.mux.HandleFunc("POST /api/v1/vpn/reputation/probe", s.requireAPIKey(s.mgHandleVPNManualProbe))
 	s.mux.HandleFunc("GET /api/v1/vpn/reputation/probe/{job_id}", s.mgHandleVPNProbeStatus)
-	s.mux.HandleFunc("POST /api/v1/vpn/servers/{id}/quarantine", requireAPIKey(s.mgHandleVPNQuarantine))
-	s.mux.HandleFunc("POST /api/v1/vpn/servers/{id}/pin", requireAPIKey(s.mgHandleVPNPin))
+	s.mux.HandleFunc("POST /api/v1/vpn/servers/{id}/quarantine", s.requireAPIKey(s.mgHandleVPNQuarantine))
+	s.mux.HandleFunc("POST /api/v1/vpn/servers/{id}/pin", s.requireAPIKey(s.mgHandleVPNPin))
 	s.mux.HandleFunc("GET /api/v1/vpn/reputation/config", s.mgHandleGetRepConfig)
-	s.mux.HandleFunc("PATCH /api/v1/vpn/reputation/config", requireAPIKey(s.mgHandlePatchRepConfig))
+	s.mux.HandleFunc("PATCH /api/v1/vpn/reputation/config", s.requireAPIKey(s.mgHandlePatchRepConfig))
 
 	// ── Settings ──────────────────────────────────────────────────────────────
-	s.mux.HandleFunc("GET /api/v1/settings", requireAPIKey(s.mgHandleGetAllSettings))
-	s.mux.HandleFunc("POST /api/v1/settings", requireAPIKey(s.mgHandleUpdateAllSettings))
-	s.mux.HandleFunc("GET /api/v1/settings/export", requireAPIKey(s.mgHandleExportSettings))
-	s.mux.HandleFunc("POST /api/v1/settings/import", requireAPIKey(s.mgHandleImportSettings))
+	s.mux.HandleFunc("GET /api/v1/settings", s.requireAPIKey(s.mgHandleGetAllSettings))
+	s.mux.HandleFunc("POST /api/v1/settings", s.requireAPIKey(s.mgHandleUpdateAllSettings))
+	s.mux.HandleFunc("GET /api/v1/settings/export", s.requireAPIKey(s.mgHandleExportSettings))
+	s.mux.HandleFunc("POST /api/v1/settings/import", s.requireAPIKey(s.mgHandleImportSettings))
 	s.mux.HandleFunc("GET /api/v1/settings/engine/config", s.mgHandleGetSettingsCategory("engine_config"))
-	s.mux.HandleFunc("POST /api/v1/settings/engine/config", requireAPIKey(s.mgHandleSetSettingsCategory("engine_config")))
+	s.mux.HandleFunc("POST /api/v1/settings/engine/config", s.requireAPIKey(s.mgHandleSetSettingsCategory("engine_config")))
 	s.mux.HandleFunc("GET /api/v1/settings/orchestrator", s.mgHandleGetSettingsCategory("orchestrator_settings"))
-	s.mux.HandleFunc("POST /api/v1/settings/orchestrator", requireAPIKey(s.mgHandleSetSettingsCategory("orchestrator_settings")))
+	s.mux.HandleFunc("POST /api/v1/settings/orchestrator", s.requireAPIKey(s.mgHandleSetSettingsCategory("orchestrator_settings")))
 	s.mux.HandleFunc("GET /api/v1/settings/engine", s.mgHandleGetSettingsCategory("engine_settings"))
-	s.mux.HandleFunc("POST /api/v1/settings/engine", requireAPIKey(s.mgHandleSetSettingsCategory("engine_settings")))
+	s.mux.HandleFunc("POST /api/v1/settings/engine", s.requireAPIKey(s.mgHandleSetSettingsCategory("engine_settings")))
 	s.mux.HandleFunc("GET /api/v1/engine/config", s.mgHandleGetSettingsCategory("engine_config"))
-	s.mux.HandleFunc("POST /api/v1/engine/config", requireAPIKey(s.mgHandleSetSettingsCategory("engine_config")))
+	s.mux.HandleFunc("POST /api/v1/engine/config", s.requireAPIKey(s.mgHandleSetSettingsCategory("engine_config")))
 	s.mux.HandleFunc("GET /api/v1/custom-variant/config", s.mgHandleGetSettingsCategory("custom_variant_config"))
-	s.mux.HandleFunc("POST /api/v1/custom-variant/config", requireAPIKey(s.mgHandleSetSettingsCategory("custom_variant_config")))
+	s.mux.HandleFunc("POST /api/v1/custom-variant/config", s.requireAPIKey(s.mgHandleSetSettingsCategory("custom_variant_config")))
 	s.mux.HandleFunc("GET /api/v1/proxy/config", s.mgHandleGetSettingsCategory("proxy_settings"))
-	s.mux.HandleFunc("POST /api/v1/proxy/config", requireAPIKey(s.mgHandleSetProxyConfig))
-	s.mux.HandleFunc("POST /api/v1/settings/vpn/credentials", requireAPIKey(s.mgHandleAddVPNCredential))
-	s.mux.HandleFunc("DELETE /api/v1/settings/vpn/credentials/{id}", requireAPIKey(s.mgHandleDeleteVPNCredential))
+	s.mux.HandleFunc("POST /api/v1/proxy/config", s.requireAPIKey(s.mgHandleSetProxyConfig))
+	s.mux.HandleFunc("POST /api/v1/settings/vpn/credentials", s.requireAPIKey(s.mgHandleAddVPNCredential))
+	s.mux.HandleFunc("DELETE /api/v1/settings/vpn/credentials/{id}", s.requireAPIKey(s.mgHandleDeleteVPNCredential))
 
 	// ── Custom variant reprovision ─────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/custom-variant/reprovision/status", s.mgHandleReprovisionStatus)
-	s.mux.HandleFunc("POST /api/v1/custom-variant/reprovision", requireAPIKey(s.mgHandleReprovision))
+	s.mux.HandleFunc("POST /api/v1/custom-variant/reprovision", s.requireAPIKey(s.mgHandleReprovision))
 	s.mux.HandleFunc("GET /api/v1/settings/engine/reprovision/status", s.mgHandleReprovisionStatus)
-	s.mux.HandleFunc("POST /api/v1/settings/engine/reprovision", requireAPIKey(s.mgHandleReprovision))
+	s.mux.HandleFunc("POST /api/v1/settings/engine/reprovision", s.requireAPIKey(s.mgHandleReprovision))
 	s.mux.HandleFunc("GET /api/v1/custom-variant/platform", s.mgHandlePlatform)
 
 	// ── Observability ─────────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/health/status", s.mgHandleHealthStatus)
-	s.mux.HandleFunc("POST /api/v1/health/circuit-breaker/reset", requireAPIKey(s.mgHandleCircuitBreakerReset))
+	s.mux.HandleFunc("POST /api/v1/health/circuit-breaker/reset", s.requireAPIKey(s.mgHandleCircuitBreakerReset))
 	s.mux.HandleFunc("GET /api/v1/orchestrator/status", s.mgHandleOrchestratorStatus)
 	s.mux.Handle("GET /api/v1/metrics", promhttp.Handler())
 	s.mux.HandleFunc("GET /api/v1/metrics/dashboard", s.mgHandleMetricsDashboard)
 	s.mux.HandleFunc("GET /api/v1/metrics/performance", s.mgHandleMetricsPerformance)
 	s.mux.HandleFunc("GET /api/v1/events", s.mgHandleEvents)
 	s.mux.HandleFunc("GET /api/v1/events/stats", s.mgHandleEventsStats)
-	s.mux.HandleFunc("POST /api/v1/events/cleanup", requireAPIKey(s.mgHandleEventsCleanup))
+	s.mux.HandleFunc("POST /api/v1/events/cleanup", s.requireAPIKey(s.mgHandleEventsCleanup))
 	s.mux.HandleFunc("GET /api/v1/cache/stats", s.mgHandleCacheStats)
-	s.mux.HandleFunc("POST /api/v1/cache/clear", requireAPIKey(s.mgHandleCacheClear))
+	s.mux.HandleFunc("POST /api/v1/cache/clear", s.requireAPIKey(s.mgHandleCacheClear))
 	s.mux.HandleFunc("GET /api/v1/engine-cache/stats", s.mgHandleCacheStats)
-	s.mux.HandleFunc("POST /api/v1/engine-cache/purge", requireAPIKey(s.mgHandleCacheClear))
+	s.mux.HandleFunc("POST /api/v1/engine-cache/purge", s.requireAPIKey(s.mgHandleCacheClear))
 
 	// ── Circuit breaker ───────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/circuit-breaker", s.mgHandleCircuitBreakerStatus)
-	s.mux.HandleFunc("POST /api/v1/circuit-breaker/reset", requireAPIKey(s.mgHandleCircuitBreakerReset))
+	s.mux.HandleFunc("POST /api/v1/circuit-breaker/reset", s.requireAPIKey(s.mgHandleCircuitBreakerReset))
 
 	// ── M3U ────────────────────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/modify_m3u", s.mgHandleModifyM3U)
@@ -1516,6 +1516,7 @@ func (s *ProxyServer) registerStaticRoutes() {
 	s.mux.HandleFunc("GET /panel/", func(w http.ResponseWriter, r *http.Request) {
 		trimmedPath := strings.TrimPrefix(r.URL.Path, "/panel")
 		if trimmedPath == "" || trimmedPath == "/" {
+			s.setPanelCookie(w)
 			r.URL.Path = "/"
 			fileServer.ServeHTTP(w, r)
 			return
@@ -1526,6 +1527,7 @@ func (s *ProxyServer) registerStaticRoutes() {
 		info, err := os.Stat(fpath)
 		if err != nil || info.IsDir() {
 			// File not found or is a directory; serve index.html for SPA routing.
+			s.setPanelCookie(w)
 			r.URL.Path = "/index.html"
 			fileServer.ServeHTTP(w, r)
 			return

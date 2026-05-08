@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useNotifications } from '@/context/NotificationContext'
 
-export function BackupSettings({ apiKey, orchUrl }) {
+export function BackupSettings({ orchUrl }) {
   const { addNotification } = useNotifications()
   const [importing, setImporting] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -15,9 +15,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
   const handleExport = async () => {
     try {
       setExporting(true)
-      const headers = {}
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-      const response = await fetch(`${orchUrl}/api/v1/settings/export`, { method: 'GET', headers })
+      const response = await fetch(`${orchUrl}/api/v1/settings/export`, { method: 'GET' })
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: response.statusText }))
         throw new Error(errorData.detail || `Export failed: ${response.status}`)
@@ -51,15 +49,13 @@ export function BackupSettings({ apiKey, orchUrl }) {
     try {
       setImporting(true)
       setImportResult(null)
-      const headers = {}
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
       const params = new URLSearchParams({
         import_engine_config: importOptions.engine_config,
         import_proxy: importOptions.proxy,
         import_engine: importOptions.engine,
       })
       const response = await fetch(`${orchUrl}/api/v1/settings/import?${params}`, {
-        method: 'POST', headers, body: file,
+        method: 'POST', body: file,
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.detail || `Import failed: ${response.status}`)

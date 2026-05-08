@@ -64,14 +64,10 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
-function buildStreamDetailsSseUrl({ orchUrl, streamId, apiKey }) {
+function buildStreamDetailsSseUrl({ orchUrl, streamId }) {
   const streamUrl = new URL(`${orchUrl}/api/v1/streams/${encodeURIComponent(streamId)}/details/stream`)
   streamUrl.searchParams.set('since_seconds', '3600')
   streamUrl.searchParams.set('interval_seconds', '1.5')
-  if (apiKey) {
-    streamUrl.searchParams.set('api_key', apiKey)
-    streamUrl.searchParams.set('token', apiKey)
-  }
   return streamUrl
 }
 
@@ -106,7 +102,7 @@ function formatTimelineTimestamp(value) {
 }
 
 
-function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, onClose }) {
+function StreamDetail({ stream, orchUrl, onStopStream, onDeleteEngine, onClose }) {
   const [stats, setStats] = useState([])
   const [loading, setLoading] = useState(true)
   const [liveConnected, setLiveConnected] = useState(false)
@@ -171,7 +167,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
         return
       }
 
-      eventSource = new EventSource(buildStreamDetailsSseUrl({ orchUrl, streamId: stream.id, apiKey }).toString())
+      eventSource = new EventSource(buildStreamDetailsSseUrl({ orchUrl, streamId: stream.id }).toString())
 
       const handleSse = (event) => {
         try {
@@ -259,7 +255,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
         eventSource.close()
       }
     }
-  }, [stream?.id, orchUrl, apiKey])
+  }, [stream?.id, orchUrl])
 
   const streamLabels = stream?.labels || {}
   const streamControlMode = streamLabels['proxy.control_mode'] || null

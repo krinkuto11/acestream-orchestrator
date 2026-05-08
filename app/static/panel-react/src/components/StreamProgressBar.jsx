@@ -48,7 +48,7 @@ function formatTimestamp(seconds) {
  * - runway: How many seconds of video are in the proxy's buffer.
  * - viewerPos: pos - runway (The trailing edge of the proxy buffer / viewer's location).
  */
-function StreamProgressBar({ streamId, orchUrl, apiKey, clientRunway, clientRunwayMax }) {
+function StreamProgressBar({ streamId, orchUrl, clientRunway, clientRunwayMax }) {
   const [liveposData, setLiveposData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -57,14 +57,8 @@ function StreamProgressBar({ streamId, orchUrl, apiKey, clientRunway, clientRunw
     if (!streamId) return
 
     try {
-      const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-
       const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(streamId)}/livepos`,
-        { headers }
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(streamId)}/livepos`
       )
 
       if (response.ok) {
@@ -79,7 +73,7 @@ function StreamProgressBar({ streamId, orchUrl, apiKey, clientRunway, clientRunw
     } finally {
       setLoading(false)
     }
-  }, [streamId, orchUrl, apiKey])
+  }, [streamId, orchUrl])
 
   useEffect(() => {
     fetchLivepos()
