@@ -126,9 +126,9 @@ export function TopologyEdge({
             style={{
               padding: '2px 6px',
               borderRadius: 2,
-              border: `1px solid ${isPrebuffering ? 'var(--acc-amber)' : (isFailover || isMonitoringRoute || isDrainingRoute) ? 'var(--acc-amber)' : flowActive ? 'var(--acc-green)' : 'var(--line)'}`,
+              border: `1px solid ${isPrebuffering ? 'var(--acc-amber)' : (isFailover || isDrainingRoute) ? 'var(--acc-amber)' : flowActive ? 'var(--acc-green)' : 'var(--line)'}`,
               background: 'var(--bg-1)',
-              color: isPrebuffering ? 'var(--acc-amber)' : (isFailover || isMonitoringRoute || isDrainingRoute) ? 'var(--acc-amber)' : flowActive ? 'var(--fg-1)' : 'var(--fg-3)',
+              color: isPrebuffering ? 'var(--acc-amber)' : (isFailover || isDrainingRoute) ? 'var(--acc-amber)' : flowActive ? 'var(--fg-1)' : 'var(--fg-3)',
               fontSize: 10,
               fontWeight: 700,
               display: 'flex',
