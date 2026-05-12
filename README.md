@@ -8,19 +8,13 @@ On-demand AceStream engine orchestration with a declarative control plane, built
 > **LEGAL DISCLAIMER: EDUCATIONAL USE ONLY**
 > 
 > This software is a proof-of-concept designed strictly for **educational and research purposes**. The primary intent of this project is to demonstrate the feasibility of a high availability scenario for the AceStream protocol and should not be used for illegal acts.
-<img width="1508" height="861" alt="Screenshot 2026-03-31 at 19 06 38" src="https://github.com/user-attachments/assets/bc024ddb-32f8-488f-9c9f-558d57e2660f" />
+<img width="1512" height="861" alt="Screenshot 2026-05-12 at 16 31 09" src="https://github.com/user-attachments/assets/a169ff3f-70f0-4d79-9e86-3f13fdae1e6d" />
 
 ## Quick Start
 
-### Standalone
 
 ```bash
-docker-compose up -d
-```
-
-### VPN (Orchestrator-Managed, Dynamic)
-
-```bash
+git clone https://github.com/krinkuto11/acestream-orchestrator.git && cd acestream-orchestrator
 docker-compose up -d
 ```
 
@@ -37,8 +31,6 @@ http://localhost:8000/panel
 >
 > If no reusable credential leases exist, the scheduler will block provisioning by design.
 
-> [!WARNING]
-> Legacy static Gluetun compose topologies are deprecated. Use orchestrator-managed dynamic VPN provisioning.
 
 Stream URL format:
 
@@ -50,13 +42,18 @@ http://<host>:8000/ace/getstream?id=<acestream_id>
 
 1. Start containers with `docker-compose.yml`.
 2. Open `http://<host>:8000/panel`.
-3. Set API key in Settings if protected endpoints are enabled.
-4. If VPN is required, add WireGuard credentials in Settings -> VPN and verify at least one lease is available.
-5. Use the stream URL format in your player.
+3. If VPN is required, add WireGuard credentials in Settings -> VPN and verify at least one lease is available.
+4. Use the stream URL format in your player.
 
 ## Modify M3U Playlist
 
 If your playlist contains AceStream IDs or direct AceStream engine URLs, rewrite each entry to use the orchestrator endpoint.
+
+Orchestrator Endpoint (Returns the modified M3U):
+
+```text
+htt`://<host>:8000/api/v1/modify_m3u?host=<host>&port=8000&m3u_url=<url>
+```
 
 Target format:
 
@@ -76,16 +73,17 @@ Typical replacements:
 - VPN credentials if enabling orchestrator-managed VPN nodes
 
 ## Main Endpoints
+Docs are available at `/api/v1/docs`
 
 ```text
 GET  /panel
 GET  /ace/getstream?id=<id>
-GET  /engines
-GET  /streams?status=started
-GET  /orchestrator/status
-GET  /metrics
-GET  /metrics/dashboard
-POST /provision/acestream
+GET  /api/v1/engines
+GET  /api/v1/streams?status=started
+GET  /api/v1/orchestrator/status
+GET  /api/v1/metrics
+GET  /api/v1/metrics/dashboard
+POST /api/v1/provision/acestream
 ```
 
 Protected endpoints require:
@@ -94,7 +92,7 @@ Protected endpoints require:
 Authorization: Bearer <API_KEY>
 ```
 
-Set `API_KEY` as an environment variable or configure it in **Settings -> Orchestrator** after startup.
+Set `API_KEY` as an environment variable. If not set, no endpoint won't be protected.
 
 ## Configuration
 
