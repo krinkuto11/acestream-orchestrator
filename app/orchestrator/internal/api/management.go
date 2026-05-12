@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -932,15 +933,129 @@ func (s *ProxyServer) mgHandleUpdateAllSettings(w http.ResponseWriter, r *http.R
 
 func (s *ProxyServer) mgHandleExportSettings(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
-		mgWriteJSON(w, http.StatusOK, map[string]any{})
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
 		return
 	}
-	w.Header().Set("Content-Disposition", "attachment; filename=acestream-settings.json")
-	mgWriteJSON(w, http.StatusOK, s.settings.GetAll())
+	all := s.settings.GetAll()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, cat := range []string{"engine_config", "engine_settings", "proxy_settings", "orchestrator_settings"} {
+		data, _ := json.MarshalIndent(all[cat], "", "  ")
+		f, err := zw.Create(cat + ".json")
+		if err != nil {
+			continue
+		}
+		f.Write(data)
+	}
+	zw.Close()
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="orchestrator_settings.zip"`)
+	w.WriteHeader(http.StatusOK)
+	w.Write(buf.Bytes())
 }
 
 func (s *ProxyServer) mgHandleImportSettings(w http.ResponseWriter, r *http.Request) {
-	s.mgHandleUpdateAllSettings(w, r)
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
+		return
+	}
+
+	q := r.URL.Query()
+	wantEngineConfig := q.Get("import_engine_config") == "true"
+	wantProxy := q.Get("import_proxy") == "true"
+	wantEngine := q.Get("import_engine") == "true"
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 50<<20))
+	if err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read body"})
+		return
+	}
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid zip file"})
+		return
+	}
+
+	fileContents := map[string]map[string]any{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		var payload map[string]any
+		if jsonErr := json.NewDecoder(rc).Decode(&payload); jsonErr == nil {
+			fileContents[strings.TrimSuffix(f.Name, ".json")] = payload
+		}
+		rc.Close()
+	}
+
+	applyCategory := func(cat string, payload map[string]any) error {
+		if err := s.settings.Save(cat, payload); err != nil {
+			return err
+		}
+		switch cat {
+		case "proxy_settings":
+			config.ApplySettings(payload)
+		case "engine_settings":
+			config.ApplyEngineSettings(payload)
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+		case "engine_config":
+			config.ApplyEngineConfig(payload)
+			go cpengine.PushEngineConfig(context.Background(), payload)
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+		}
+		return nil
+	}
+
+	type importedResult struct {
+		EngineConfig bool     `json:"engine_config"`
+		Proxy        bool     `json:"proxy"`
+		Engine       bool     `json:"engine"`
+		Errors       []string `json:"errors"`
+	}
+	result := importedResult{Errors: []string{}}
+
+	if wantEngineConfig {
+		if payload, ok := fileContents["engine_config"]; ok {
+			if err := applyCategory("engine_config", payload); err != nil {
+				result.Errors = append(result.Errors, "engine_config: "+err.Error())
+			} else {
+				result.EngineConfig = true
+			}
+		} else {
+			result.Errors = append(result.Errors, "engine_config: not found in zip")
+		}
+	}
+	if wantProxy {
+		if payload, ok := fileContents["proxy_settings"]; ok {
+			if err := applyCategory("proxy_settings", payload); err != nil {
+				result.Errors = append(result.Errors, "proxy_settings: "+err.Error())
+			} else {
+				result.Proxy = true
+			}
+		} else {
+			result.Errors = append(result.Errors, "proxy_settings: not found in zip")
+		}
+	}
+	if wantEngine {
+		if payload, ok := fileContents["engine_settings"]; ok {
+			if err := applyCategory("engine_settings", payload); err != nil {
+				result.Errors = append(result.Errors, "engine_settings: "+err.Error())
+			} else {
+				result.Engine = true
+			}
+		} else {
+			result.Errors = append(result.Errors, "engine_settings: not found in zip")
+		}
+	}
+
+	mgWriteJSON(w, http.StatusOK, map[string]any{"imported": result})
 }
 
 func (s *ProxyServer) mgHandleGetSettingsCategory(cat string) http.HandlerFunc {
