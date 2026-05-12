@@ -229,6 +229,7 @@ func main() {
 		}
 	}()
 	go proxySrv.RunSSEPublisher(appCtx)
+	go proxySrv.RunMetricsPublisher(appCtx)
 
 	go func() {
 		if err := orchSrv.Start(); err != nil && err != http.ErrServerClosed {

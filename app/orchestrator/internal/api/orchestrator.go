@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
 	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/engine"
 	"github.com/acestream/acestream/internal/persistence"
@@ -49,8 +47,6 @@ func NewOrchestratorServer(st *state.Store, settings *persistence.SettingsStore)
 	mux.HandleFunc("DELETE /settings/vpn/credentials/{id}", s.handleDeleteVPNCredential)
 	// Internal: engine selection (for external callers / compatibility)
 	mux.HandleFunc("GET /internal/proxy/select-engine", s.handleSelectEngine)
-	mux.Handle("GET /metrics", promhttp.Handler())
-
 	handler := orchAPIKeyMiddleware(mux)
 	s.httpSrv = &http.Server{
 		Addr:    config.C.Load().OrchestratorListenAddr,
@@ -77,7 +73,7 @@ func orchAPIKeyMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/metrics" || r.URL.Path == "/health" {
+		if r.URL.Path == "/health" {
 			next.ServeHTTP(w, r)
 			return
 		}

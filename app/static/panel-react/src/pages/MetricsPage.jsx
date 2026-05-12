@@ -301,6 +301,7 @@ export function MetricsPage({ orchUrl }) {
   const lineOptions = (title, yAxisLabel) => ({
     responsive: true,
     maintainAspectRatio: false,
+    animation: false,
     interaction: {
       mode: 'index',
       intersect: false,
@@ -330,6 +331,7 @@ export function MetricsPage({ orchUrl }) {
   const barOptions = {
     responsive: true,
     maintainAspectRatio: false,
+    animation: false,
     plugins: {
       legend: {
         display: false,
@@ -506,6 +508,7 @@ export function MetricsPage({ orchUrl }) {
                 }}
                 options={{
                   responsive: true, maintainAspectRatio: false,
+                  animation: false,
                   interaction: { mode: 'index', intersect: false },
                   scales: {
                     y: { beginAtZero: true, title: { display: true, text: 'ms' } },

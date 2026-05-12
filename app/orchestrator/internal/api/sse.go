@@ -29,6 +29,10 @@ var globalBroker = &sseBroker{
 	clients: make(map[chan []byte]struct{}),
 }
 
+var metricsBroker = &sseBroker{
+	clients: make(map[chan []byte]struct{}),
+}
+
 func (b *sseBroker) subscribe() chan []byte {
 	ch := make(chan []byte, 4)
 	b.mu.Lock()
@@ -317,26 +321,38 @@ func (s *ProxyServer) handleSSEMetricsStream(w http.ResponseWriter, r *http.Requ
 
 	sseHeaders(w)
 
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	keepalive := time.NewTicker(15 * time.Second)
-	defer keepalive.Stop()
-
+	// Send an immediate snapshot so the client doesn't wait up to 5 s for
+	// the first broker tick.
 	windowSeconds := 900
 	if raw := r.URL.Query().Get("window_seconds"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 			windowSeconds = parsed
 		}
 	}
+	initial := buildDashboardSnapshot(s.st, windowSeconds)
+	if !writeSSEEvent(w, "metrics_snapshot", initial) {
+		return
+	}
+
+	ch := metricsBroker.subscribe()
+	defer metricsBroker.unsubscribe(ch)
+
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ticker.C:
-			snapshot := buildDashboardSnapshot(s.st, windowSeconds)
-			if !writeSSEEvent(w, "metrics_snapshot", snapshot) {
+		case msg, ok := <-ch:
+			if !ok {
 				return
+			}
+			if _, err := w.Write(msg); err != nil {
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
 			}
 		case <-keepalive.C:
 			if !writeSSEKeepAlive(w) {
@@ -675,6 +691,24 @@ func (s *ProxyServer) RunSSEPublisher(ctx context.Context) {
 				})
 				globalBroker.publish([]byte(msg))
 			}
+		}
+	}
+}
+
+// RunMetricsPublisher builds a dashboard snapshot every 5 s and fans it out to
+// all /api/v1/metrics/stream subscribers. One computation is shared across all
+// connected clients instead of each client running its own ticker.
+func (s *ProxyServer) RunMetricsPublisher(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			snapshot := buildDashboardSnapshot(s.st, 900)
+			msg := formatSSE("metrics_snapshot", snapshot)
+			metricsBroker.publish([]byte(msg))
 		}
 	}
 }

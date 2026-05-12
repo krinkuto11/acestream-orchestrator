@@ -19,8 +19,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
 	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/controlplane/circuitbreaker"
 	cpengine "github.com/acestream/acestream/internal/controlplane/engine"
@@ -117,8 +115,6 @@ func (s *ProxyServer) registerRoutes() {
 	s.mux.HandleFunc("/internal/proxy/swap", s.requireAPIKey(s.handleInternalSwap))
 
 	s.mux.HandleFunc("/proxy/health", s.handleHealth)
-
-	s.mux.Handle("/metrics/proxy", promhttp.Handler())
 
 	s.mux.HandleFunc("/debug/pprof/", s.requireAPIKey(pprof.Index))
 	s.mux.HandleFunc("/debug/pprof/cmdline", s.requireAPIKey(pprof.Cmdline))
