@@ -98,8 +98,8 @@ Set `API_KEY` as an environment variable or configure it in **Settings -> Orches
 
 ## Configuration
 
-Most settings can be changed at runtime in the **Settings** panel and are persisted to `app/config/*.json`.
-For initial deployment (especially VPN mode), use environment variables. See [`.env.example`](.env.example) and [docs/CONFIG.md](docs/CONFIG.md).
+Most settings can be changed at runtime in the **Settings** panel and are persisted to the SQLite database (`orchestrator.db` inside the config volume).
+For initial deployment (especially VPN mode), use environment variables. See [docs/CONFIG.md](docs/CONFIG.md).
 
 Key environment variables:
 
@@ -127,8 +127,6 @@ Key environment variables:
 
 ## Development
 
-Run tests:
-
 ```bash
-python -m pytest tests/
+cd app/orchestrator && go test ./...
 ```

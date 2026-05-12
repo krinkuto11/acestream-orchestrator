@@ -1,6 +1,6 @@
 # Settings Reference
 
-The AceStream Orchestrator uses a UI-driven configuration system. All settings are persisted to JSON files (`app/config/orchestrator_settings.json` and `vpn_settings.json`) and can be managed via the **Settings** dashboard.
+The AceStream Orchestrator uses a UI-driven configuration system. All settings are persisted to SQLite (`orchestrator.db` inside the config volume) and can be managed via the **Settings** dashboard.
 
 ## Orchestrator Settings
 
@@ -91,7 +91,7 @@ Use preflight to validate content before opening client sessions, especially whe
 
 All settings can be supplied as environment variables. Variables marked **[UI]** are also configurable at runtime via the Settings dashboard and will be persisted to `app/config/*.json`. The env var value is used on container start; the UI value overrides it after the first save.
 
-A ready-to-use template with all variables is provided in [`.env.example`](../.env.example).
+All variables below can be set in your `docker-compose.yml` or passed via a `.env` file.
 
 ### Security
 
