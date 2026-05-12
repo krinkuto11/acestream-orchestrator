@@ -713,21 +713,17 @@ func decodeJSON(r io.Reader, v any) error {
 	return json.NewDecoder(r).Decode(v)
 }
 
-func (s *ProxyServer) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
+// requireAPIKey is a package-level middleware that enforces the configured API
+// key via X-API-Key header, Authorization: Bearer token, or ?key= query param.
+// It does not check the panel session cookie (server-scoped); use the method
+// on ProxyServer for full auth including the cookie path.
+func requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := config.C.Load().APIKey
 		if key == "" {
 			next(w, r)
 			return
 		}
-		// Panel session cookie: set when the browser loads /panel/, grants full access.
-		if cookie, err := r.Cookie("ace_panel_session"); err == nil {
-			if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(s.panelToken)) == 1 {
-				next(w, r)
-				return
-			}
-		}
-		// External callers: X-API-Key header, Authorization: Bearer <token>, or ?key= query param.
 		provided := r.Header.Get("X-API-Key")
 		if provided == "" {
 			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
@@ -746,6 +742,21 @@ func (s *ProxyServer) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r)
+	}
+}
+
+func (s *ProxyServer) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Panel session cookie: set when the browser loads /panel/, grants full access.
+		if config.C.Load().APIKey != "" {
+			if cookie, err := r.Cookie("ace_panel_session"); err == nil {
+				if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(s.panelToken)) == 1 {
+					next(w, r)
+					return
+				}
+			}
+		}
+		requireAPIKey(next)(w, r)
 	}
 }
 
