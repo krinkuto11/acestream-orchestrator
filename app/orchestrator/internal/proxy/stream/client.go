@@ -14,17 +14,9 @@ import (
 	"github.com/acestream/acestream/internal/proxy/ts"
 )
 
-const (
-	pacingGracePeriod  = 2 * time.Second
-	maxPacingSleep     = 500 * time.Millisecond
-	starvationLogEvery = 10
+const pcrMinStableBPS = 256 * 1024
 
-	minRunwayChunks = 3
-
-	pcrMinStableBPS = 256 * 1024
-)
-
-// ClientStreamer delivers buffered chunks to one HTTP client with bitrate pacing.
+// ClientStreamer delivers buffered chunks to one HTTP client.
 type ClientStreamer struct {
 	contentID string
 	clientID  string
@@ -41,14 +33,6 @@ type ClientStreamer struct {
 	chunksSent int64
 	localIndex int64
 
-	pacingStart    time.Time
-	videoByteSent  int64
-	streamBitrate  int
-	pacingBurstSec float64
-
-	chunkRateEMA      float64
-	lastChunkRateTime time.Time
-
 	nullCC uint8
 
 	tag string
@@ -59,19 +43,17 @@ func NewClientStreamer(contentID, clientID, ip, userAgent string, seekback int,
 	w io.Writer, flusher interface{ Flush() }) *ClientStreamer {
 
 	return &ClientStreamer{
-		contentID:         contentID,
-		clientID:          clientID,
-		clientIP:          ip,
-		userAgent:         userAgent,
-		seekback:          seekback,
-		manager:           mgr,
-		buf:               buf,
-		cm:                cm,
-		w:                 w,
-		flusher:           flusher,
-		pacingBurstSec:    config.C.Load().PacingBurstSeconds,
-		lastChunkRateTime: time.Now(),
-		tag:               fmt.Sprintf("[ts:%s][client:%s]", contentID, clientID),
+		contentID: contentID,
+		clientID:  clientID,
+		clientIP:  ip,
+		userAgent: userAgent,
+		seekback:  seekback,
+		manager:   mgr,
+		buf:       buf,
+		cm:        cm,
+		w:         w,
+		flusher:   flusher,
+		tag:       fmt.Sprintf("[ts:%s][client:%s]", contentID, clientID),
 	}
 }
 
@@ -92,11 +74,8 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 	}
 	defer cs.cm.Remove(cs.clientID)
 
-	cs.streamBitrate = cs.manager.Bitrate()
-	cs.pacingStart = time.Now()
-
 	slog.Info("client stream starting", "stream", cs.contentID, "client", cs.clientID,
-		"ip", cs.clientIP, "bitrate_bps", cs.streamBitrate*8)
+		"ip", cs.clientIP)
 
 	pbSec := cs.manager.PrebufferSeconds()
 	if pbSec <= 0 {
@@ -108,8 +87,6 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 		}
 		cs.applyPrebuffer(ctx, pbSec)
 	}
-
-	cs.initPacingBurst()
 
 	cfg := config.C.Load()
 	maxEmpty := cfg.NoDataTimeoutChecks
@@ -126,7 +103,6 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 		if n > 0 {
 			emptyCount = 0
 			cs.bytesSent += n
-			cs.videoByteSent += n
 			delta := newIdx - cs.localIndex
 			cs.chunksSent += delta
 			if cs.flusher != nil {
@@ -135,9 +111,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 			telemetry.DefaultTelemetry.ObserveEgress("TS", n)
 			cs.cm.UpdateStats(cs.clientID, n, delta)
 			cs.localIndex = newIdx
-			cs.updateChunkRate(int(delta))
 			cs.updateClientPosition()
-			cs.applyPacing()
 		} else if err != nil {
 			slog.Debug("client write error", "stream", cs.contentID, "client", cs.clientID, "err", err)
 			return
@@ -164,7 +138,6 @@ func (cs *ClientStreamer) sendFirstChunk(ctx context.Context) bool {
 		n, newIdx, err := cs.buf.WriteAfterTo(cs.localIndex, 1, cs.w)
 		if n > 0 {
 			cs.bytesSent += n
-			cs.videoByteSent += n
 			cs.chunksSent++
 			if cs.flusher != nil {
 				cs.flusher.Flush()
@@ -204,9 +177,6 @@ func (cs *ClientStreamer) waitForReady(ctx context.Context) bool {
 
 func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
 	bitrate := cs.manager.Bitrate()
-	if bitrate <= 0 {
-		bitrate = cs.streamBitrate
-	}
 	if bitrate <= 0 {
 		bitrate = 312500
 	}
@@ -261,131 +231,15 @@ func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
 	slog.Info("prebuffer timeout reached", "stream", cs.contentID, "client", cs.clientID)
 }
 
-func (cs *ClientStreamer) effectiveBPS() int {
-	if vbr := cs.buf.VideoBitrate(); vbr >= pcrMinStableBPS {
-		return int(vbr)
-	}
-	return cs.streamBitrate
-}
-
-func (cs *ClientStreamer) initPacingBurst() {
-	runway := cs.buf.Head() - cs.localIndex
-	safeRunway := runway - int64(minRunwayChunks)
-	if safeRunway <= 0 {
-		return
-	}
-	bps := cs.effectiveBPS()
-	if bps <= 0 {
-		return
-	}
-	runwaySec := float64(safeRunway) * float64(cs.buf.TargetChunkSize()) / float64(bps)
-	if runwaySec < cs.pacingBurstSec {
-		cs.pacingBurstSec = runwaySec
-		slog.Debug("pacing burst capped by runway",
-			"stream", cs.contentID, "client", cs.clientID,
-			"burst_s", math.Round(runwaySec*10)/10,
-			"runway_chunks", runway)
-	}
-}
-
-func (cs *ClientStreamer) applyPacing() {
-	if cs.pacingStart.IsZero() {
-		return
-	}
-	elapsed := time.Since(cs.pacingStart).Seconds()
-	if elapsed < pacingGracePeriod.Seconds() {
-		return
-	}
-
-	cfg := config.C.Load()
-	runway := int(cs.buf.Head() - cs.localIndex)
-
-	mult := cs.manager.PacingMultiplier()
-	if mult <= 0 {
-		mult = cfg.PacingBitrateMultiplier
-	}
-
-	switch {
-	case runway > 30:
-		mult = cfg.ProxyMaxCatchupMultiplier
-	case runway > 15:
-		midMult := cfg.ProxyMaxCatchupMultiplier * 0.75
-		if mult < midMult {
-			mult = midMult
-		}
-	case runway < minRunwayChunks:
-		mult = 1.0
-	}
-
-	bps := cs.effectiveBPS()
-
-	if bps > 0 {
-		effectiveBR := float64(bps) * mult
-		burst := effectiveBR * cs.pacingBurstSec
-		expected := elapsed * effectiveBR
-		if float64(cs.videoByteSent) > expected+burst {
-			wait := (float64(cs.videoByteSent)-burst)/effectiveBR - elapsed
-			if wait > 0 {
-				if wait > maxPacingSleep.Seconds() {
-					wait = maxPacingSleep.Seconds()
-				}
-				time.Sleep(time.Duration(wait * float64(time.Second)))
-			}
-		}
-		return
-	}
-
-	rate := cs.chunkRateEMA
-	if rate <= 0 {
-		return
-	}
-	expected := elapsed * rate
-	burst := cs.pacingBurstSec * rate
-	if float64(cs.chunksSent) > expected+burst {
-		wait := (float64(cs.chunksSent)-burst)/rate - elapsed
-		if wait > 0 {
-			if wait > maxPacingSleep.Seconds() {
-				wait = maxPacingSleep.Seconds()
-			}
-			time.Sleep(time.Duration(wait * float64(time.Second)))
-		}
-	}
-}
-
 func (cs *ClientStreamer) updateClientPosition() {
-	bps := cs.effectiveBPS()
-	if bps <= 0 {
+	bps := cs.buf.VideoBitrate()
+	if bps < pcrMinStableBPS {
 		return
 	}
 	runway := cs.buf.Head() - cs.localIndex
 	if runway < 0 {
 		runway = 0
 	}
-	secondsBehind := float64(runway) * float64(cs.buf.TargetChunkSize()) / float64(bps)
+	secondsBehind := float64(runway) * float64(cs.buf.TargetChunkSize()) / bps
 	cs.cm.UpdatePosition(cs.clientID, secondsBehind)
-}
-
-func (cs *ClientStreamer) updateChunkRate(n int) {
-	if vbr := cs.buf.VideoBitrate(); vbr >= pcrMinStableBPS {
-		chunkRate := vbr / float64(cs.buf.TargetChunkSize())
-		if cs.chunkRateEMA == 0 {
-			cs.chunkRateEMA = chunkRate
-		} else {
-			cs.chunkRateEMA = 0.2*chunkRate + 0.8*cs.chunkRateEMA
-		}
-		return
-	}
-
-	now := time.Now()
-	elapsed := now.Sub(cs.lastChunkRateTime).Seconds()
-	cs.lastChunkRateTime = now
-	if n <= 0 || elapsed <= 0 {
-		return
-	}
-	instant := float64(n) / elapsed
-	if cs.chunkRateEMA == 0 {
-		cs.chunkRateEMA = instant
-	} else {
-		cs.chunkRateEMA = 0.2*instant + 0.8*cs.chunkRateEMA
-	}
 }
