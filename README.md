@@ -52,7 +52,7 @@ If your playlist contains AceStream IDs or direct AceStream engine URLs, rewrite
 Orchestrator Endpoint (Returns the modified M3U):
 
 ```text
-htt`://<host>:8000/api/v1/modify_m3u?host=<host>&port=8000&m3u_url=<url>
+http://<host>:8000/api/v1/modify_m3u?host=<host>&port=8000&m3u_url=<url>
 ```
 
 Target format:
