@@ -4,7 +4,7 @@ function StatusTag({ status }) {
   const map = {
     started: 'green', active: 'green', playing: 'green',
     pending_failover: 'magenta', migrating: 'magenta',
-    allocating: 'cyan', prebuf: 'cyan',
+    allocating: 'cyan', prebuf: 'amber',
     ended: 'amber', stopping: 'amber',
     failed: 'red', error: 'red',
   }

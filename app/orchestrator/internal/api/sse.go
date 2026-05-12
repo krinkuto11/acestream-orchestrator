@@ -536,7 +536,7 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 
 	activeStreams := 0
 	for _, st := range streams {
-		if st.Status == "started" {
+		if st.Status == "started" || st.Status == "playing" || st.Status == "prebuf" {
 			activeStreams++
 		}
 	}
@@ -588,7 +588,7 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 	var allClients []map[string]any
 	totalClients := 0
 	for _, st := range streams {
-		if st.Status == "started" || st.Status == "prebuf" {
+		if st.Status == "started" || st.Status == "playing" || st.Status == "prebuf" {
 			totalClients += st.ActiveClients
 			for _, c := range st.Clients {
 				cc := make(map[string]any)
