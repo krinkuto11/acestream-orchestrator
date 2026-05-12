@@ -64,6 +64,10 @@ yarn.lock
 dist/
 build/
 
+# Go compiled binaries
+app/orchestrator/acestream-unified
+app/orchestrator/acestream-*
+
 # React dashboard build output (generated during Docker build)
 app/static/panel/
 
