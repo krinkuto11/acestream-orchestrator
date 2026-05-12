@@ -101,26 +101,30 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 	}
 
 	// Choose a safe hostname from the catalog unless the credential already pins one.
+	// Skip server selection entirely for the "custom" provider — it uses user-supplied
+	// config directly and has no catalog to select from.
 	hasExplicitPin := env["SERVER_HOSTNAMES"] != "" || env["WIREGUARD_ENDPOINTS"] != ""
 	requirePF := env["VPN_PORT_FORWARDING"] == "on"
 	catalogFile := effectiveCatalogFile(map[string]interface{}{})
 
-	if !hasExplicitPin {
-		// Collect hostnames already in use so each VPN node lands on a distinct server.
-		var activeHostnames []string
-		for _, n := range state.Global.ListVPNNodes() {
-			if n.AssignedHostname != "" {
-				activeHostnames = append(activeHostnames, n.AssignedHostname)
+	if provider != "custom" {
+		if !hasExplicitPin {
+			// Collect hostnames already in use so each VPN node lands on a distinct server.
+			var activeHostnames []string
+			for _, n := range state.Global.ListVPNNodes() {
+				if n.AssignedHostname != "" {
+					activeHostnames = append(activeHostnames, n.AssignedHostname)
+				}
+			}
+			hn := p.rep.GetSafeHostname(ctx, provider, regions, protocol, requirePF, catalogFile, activeHostnames)
+			if hn != "" {
+				env["SERVER_HOSTNAMES"] = hn
 			}
 		}
-		hn := p.rep.GetSafeHostname(ctx, provider, regions, protocol, requirePF, catalogFile, activeHostnames)
-		if hn != "" {
-			env["SERVER_HOSTNAMES"] = hn
-		}
-	}
 
-	// Apply port-forwarding filter guard — may drop incompatible server pins.
-	applyPFFilterGuard(env, provider, protocol, catalogFile, p.rep)
+		// Apply port-forwarding filter guard — may drop incompatible server pins.
+		applyPFFilterGuard(env, provider, protocol, catalogFile, p.rep)
+	}
 
 	assignedHostname := ""
 	if hn, ok := env["SERVER_HOSTNAMES"]; ok {
