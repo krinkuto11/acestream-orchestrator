@@ -94,13 +94,19 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 
 	cpuPercent, memBytes := summarizeEngineResources(engines)
 
+	reqStats := telemetry.DefaultTelemetry.WindowStats(time.Minute)
+	successRatePct := 100.0
+	if reqStats.TotalRequests > 0 {
+		successRatePct = float64(reqStats.TotalRequests-reqStats.Errors4xx-reqStats.Errors5xx) / float64(reqStats.TotalRequests) * 100
+	}
+
 	return map[string]any{
 		"timestamp":                  time.Now().UTC().Unix(),
 		"observation_window_seconds": windowSeconds,
 		"north_star": map[string]any{
 			"global_active_streams":        len(streams),
 			"global_egress_bandwidth_mbps": round3(egressMbps),
-			"system_success_rate_percent":  100,
+			"system_success_rate_percent":  round3(successRatePct),
 			"proxy_active_clients":         activeClients,
 		},
 		"proxy": map[string]any{
@@ -109,15 +115,15 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 				"egress_mbps":  egressMbps,
 			},
 			"request_window_1m": map[string]any{
-				"success_rate_percent":   100,
-				"total_requests_1m":      0,
-				"error_4xx_rate_per_min": 0,
-				"error_5xx_rate_per_min": 0,
-				"ttfb_p95_ms":            0,
+				"success_rate_percent":   round3(successRatePct),
+				"total_requests_1m":      reqStats.TotalRequests,
+				"error_4xx_rate_per_min": reqStats.Errors4xx,
+				"error_5xx_rate_per_min": reqStats.Errors5xx,
+				"ttfb_p95_ms":            round3(reqStats.TTFBP95Ms),
 			},
 			"ttfb": map[string]any{
-				"avg_ms": 0,
-				"p95_ms": 0,
+				"avg_ms": round3(reqStats.TTFBAvgMs),
+				"p95_ms": round3(reqStats.TTFBP95Ms),
 			},
 			"active_clients": map[string]any{
 				"total": activeClients,

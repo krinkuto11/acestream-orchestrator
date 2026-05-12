@@ -2,12 +2,30 @@ package telemetry
 
 import (
 	"fmt"
+	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/acestream/acestream/internal/metrics"
 )
+
+const maxHistorySize = 5000
+
+type timedRequestEvent struct {
+	RequestEvent
+	at time.Time
+}
+
+// WindowStats holds aggregated request statistics over a time window.
+type WindowStats struct {
+	TotalRequests int
+	Errors4xx     int
+	Errors5xx     int
+	TTFBAvgMs     float64
+	TTFBP95Ms     float64
+}
 
 // RequestEvent represents a single request observation.
 type RequestEvent struct {
@@ -36,6 +54,9 @@ type TelemetryTracker struct {
 	egressRate  float64 // Mbps
 	lastEgress  int64
 	lastTime    time.Time
+
+	historyMu sync.RWMutex
+	history   []timedRequestEvent
 }
 
 // Global instance. In a full refactor we might pass this around, but
@@ -51,6 +72,7 @@ func NewTelemetryTracker() *TelemetryTracker {
 		},
 		stopCh:   make(chan struct{}),
 		lastTime: time.Now(),
+		history:  make([]timedRequestEvent, 0, 200),
 	}
 	go t.worker()
 	return t
@@ -63,16 +85,64 @@ func (t *TelemetryTracker) ObserveRequest(mode, endpoint string, durationSecs fl
 		metrics.HttpTtfbSeconds.WithLabelValues(mode, endpoint).Observe(ttfbSecs)
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.batch.Requests = append(t.batch.Requests, RequestEvent{
+	ev := RequestEvent{
 		Mode:         mode,
 		Endpoint:     endpoint,
 		DurationSecs: durationSecs,
 		Success:      success,
 		StatusCode:   statusCode,
 		TTFBSecs:     ttfbSecs,
-	})
+	}
+
+	t.mu.Lock()
+	t.batch.Requests = append(t.batch.Requests, ev)
+	t.mu.Unlock()
+
+	t.historyMu.Lock()
+	t.history = append(t.history, timedRequestEvent{RequestEvent: ev, at: time.Now()})
+	if len(t.history) > maxHistorySize {
+		t.history = t.history[len(t.history)-maxHistorySize:]
+	}
+	t.historyMu.Unlock()
+}
+
+// WindowStats returns aggregated request statistics over the given time window.
+func (t *TelemetryTracker) WindowStats(window time.Duration) WindowStats {
+	cutoff := time.Now().Add(-window)
+	t.historyMu.RLock()
+	defer t.historyMu.RUnlock()
+
+	var stats WindowStats
+	var ttfbs []float64
+	for _, e := range t.history {
+		if e.at.Before(cutoff) {
+			continue
+		}
+		stats.TotalRequests++
+		switch {
+		case e.StatusCode >= 500:
+			stats.Errors5xx++
+		case e.StatusCode >= 400:
+			stats.Errors4xx++
+		}
+		if e.TTFBSecs > 0 {
+			ttfbs = append(ttfbs, e.TTFBSecs*1000)
+		}
+	}
+	if len(ttfbs) > 0 {
+		sort.Float64s(ttfbs)
+		var sum float64
+		for _, v := range ttfbs {
+			sum += v
+		}
+		stats.TTFBAvgMs = sum / float64(len(ttfbs))
+		p95idx := int(math.Ceil(float64(len(ttfbs))*0.95)) - 1
+		if p95idx >= len(ttfbs) {
+			p95idx = len(ttfbs) - 1
+		}
+		stats.TTFBP95Ms = ttfbs[p95idx]
+	}
+	return stats
 }
 
 func (t *TelemetryTracker) ObserveConnect(mode string) {
@@ -152,8 +222,22 @@ func (t *TelemetryTracker) worker() {
 		case <-ticker.C:
 			t.updateRate()
 			t.push()
+			t.pruneHistory()
 		}
 	}
+}
+
+func (t *TelemetryTracker) pruneHistory() {
+	cutoff := time.Now().Add(-2 * time.Minute)
+	t.historyMu.Lock()
+	i := 0
+	for i < len(t.history) && t.history[i].at.Before(cutoff) {
+		i++
+	}
+	if i > 0 {
+		t.history = t.history[i:]
+	}
+	t.historyMu.Unlock()
 }
 
 func (t *TelemetryTracker) push() {
