@@ -33,11 +33,7 @@ open http://localhost:8000/panel
 For VPN-protected engines with dynamic Gluetun provisioning:
 
 ```bash
-# 1. Copy and edit the environment file
-cp .env.example .env
-# Edit .env: set API_KEY and dynamic VPN defaults (provider/protocol)
-
-# 2. Start orchestrator
+# 1. Start orchestrator
 docker-compose up -d
 
 # 3. Access the dashboard and configure VPN credentials in Settings -> VPN
@@ -119,11 +115,6 @@ docker-compose up -d
   volumes:
     - ./config:/app/app/config
   ```
-- [ ] **Mount database volume**
-  ```yaml
-  volumes:
-    - ./orchestrator.db:/app/orchestrator.db
-  ```
 - [ ] **Log rotation** - Configure Docker logging driver
 
 ### Monitoring
@@ -136,5 +127,5 @@ docker-compose up -d
 ### Troubleshooting
 
 - [ ] **Check logs**: `docker logs orchestrator`
-- [ ] **Check config files**: Inspect `app/config/orchestrator_settings.json` if values seem wrong.
+- [ ] **Check settings**: Use the Settings dashboard to inspect current values, or query the SQLite database: `sqlite3 config/orchestrator.db '.dump'`
 - [ ] **Reset configuration**: Deleting the `.json` files in `config/` will reset the app to systemic defaults.

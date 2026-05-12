@@ -1,0 +1,240 @@
+package api
+
+import (
+	"math"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/acestream/acestream/internal/proxy/telemetry"
+	"github.com/acestream/acestream/internal/state"
+)
+
+func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
+	if windowSeconds <= 0 {
+		windowSeconds = 900
+	}
+
+	streams := st.ListStreams()
+	engines := st.ListEngines()
+	streamCounts := st.GetAllStreamCounts()
+
+	activeClients := 0
+	tsClients := 0
+	hlsClients := 0
+	peersTotal := 0
+	var bufferPieces []int
+	var ingressSum int
+	var egressSum int
+
+	activeKeysMap := map[string]struct{}{}
+	for _, s := range streams {
+		activeClients += s.ActiveClients
+		if strings.ToUpper(s.StreamMode) == "HLS" {
+			hlsClients += s.ActiveClients
+		} else {
+			tsClients += s.ActiveClients
+		}
+		if s.Peers != nil {
+			peersTotal += *s.Peers
+		}
+		if s.SpeedDown != nil {
+			ingressSum += *s.SpeedDown
+		}
+		if s.SpeedUp != nil {
+			egressSum += *s.SpeedUp
+		}
+
+		buffer := extractBufferPieces(s)
+		if buffer >= 0 {
+			bufferPieces = append(bufferPieces, buffer)
+		}
+
+		key := s.Key
+		if key == "" {
+			key = s.ContentID
+		}
+		if key != "" {
+			activeKeysMap[key] = struct{}{}
+		}
+	}
+
+	activeKeys := make([]string, 0, len(activeKeysMap))
+	for key := range activeKeysMap {
+		activeKeys = append(activeKeys, key)
+	}
+	sort.Strings(activeKeys)
+
+	bufferAvg, bufferMin := summarizeBuffers(bufferPieces)
+
+	usedEngines := 0
+	var healthy, unhealthy, draining, unknown int
+	var uptimeSum float64
+	for _, e := range engines {
+		count := streamCounts[e.ContainerID]
+		if count > 0 {
+			usedEngines++
+		}
+		switch {
+		case e.Draining:
+			draining++
+		case e.HealthStatus == "healthy":
+			healthy++
+		case e.HealthStatus == "unhealthy":
+			unhealthy++
+		default:
+			unknown++
+		}
+		if !e.FirstSeen.IsZero() {
+			uptimeSum += time.Since(e.FirstSeen).Seconds()
+		}
+	}
+	uptimeAvg := 0
+	if len(engines) > 0 {
+		uptimeAvg = int(uptimeSum / float64(len(engines)))
+	}
+
+	engineStateCounts := map[string]int{
+		"playing":   usedEngines,
+		"idle":      int(math.Max(float64(healthy-usedEngines), 0)),
+		"unhealthy": unhealthy,
+		"unknown":   unknown,
+	}
+
+	ingressMbps := toMbps(ingressSum)
+	egressMbps := toMbps(egressSum)
+	if egressMbps <= 0 {
+		egressMbps = telemetry.DefaultTelemetry.GetEgressMbps()
+	}
+
+	cpuPercent, memBytes := summarizeEngineResources(engines)
+
+	reqStats := telemetry.DefaultTelemetry.WindowStats(time.Minute)
+	successRatePct := 100.0
+	if reqStats.TotalRequests > 0 {
+		successRatePct = float64(reqStats.TotalRequests-reqStats.Errors4xx-reqStats.Errors5xx) / float64(reqStats.TotalRequests) * 100
+	}
+
+	return map[string]any{
+		"timestamp":                  time.Now().UTC().Unix(),
+		"observation_window_seconds": windowSeconds,
+		"north_star": map[string]any{
+			"global_active_streams":        len(streams),
+			"global_egress_bandwidth_mbps": round3(egressMbps),
+			"system_success_rate_percent":  round3(successRatePct),
+			"proxy_active_clients":         activeClients,
+		},
+		"proxy": map[string]any{
+			"throughput": map[string]any{
+				"ingress_mbps": ingressMbps,
+				"egress_mbps":  egressMbps,
+			},
+			"request_window_1m": map[string]any{
+				"success_rate_percent":   round3(successRatePct),
+				"total_requests_1m":      reqStats.TotalRequests,
+				"error_4xx_rate_per_min": reqStats.Errors4xx,
+				"error_5xx_rate_per_min": reqStats.Errors5xx,
+				"ttfb_p95_ms":            round3(reqStats.TTFBP95Ms),
+			},
+			"ttfb": map[string]any{
+				"avg_ms": round3(reqStats.TTFBAvgMs),
+				"p95_ms": round3(reqStats.TTFBP95Ms),
+			},
+			"active_clients": map[string]any{
+				"total": activeClients,
+				"ts":    tsClients,
+				"hls":   hlsClients,
+			},
+		},
+		"engines": map[string]any{
+			"total":              len(engines),
+			"healthy":            healthy,
+			"unhealthy":          unhealthy,
+			"unknown":            unknown,
+			"used":               usedEngines,
+			"state_counts":       engineStateCounts,
+			"uptime_avg_seconds": uptimeAvg,
+		},
+		"streams": map[string]any{
+			"active":              len(streams),
+			"total_peers":         peersTotal,
+			"download_speed_mbps": round3(ingressMbps),
+			"active_keys":         activeKeys,
+			"buffer": map[string]any{
+				"avg_pieces": bufferAvg,
+				"min_pieces": bufferMin,
+			},
+		},
+		"docker": map[string]any{
+			"cpu_percent":      round3(cpuPercent),
+			"memory_usage":     int64(memBytes),
+			"restart_total":    0,
+			"oom_killed_total": 0,
+		},
+	}
+}
+
+func extractBufferPieces(s *state.StreamState) int {
+	if s == nil {
+		return -1
+	}
+	if s.ProxyBufferPieces != nil {
+		return *s.ProxyBufferPieces
+	}
+	if s.Livepos != nil {
+		switch v := s.Livepos.BufferPieces.(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				return n
+			}
+		}
+	}
+	return -1
+}
+
+func summarizeBuffers(values []int) (avg int, min int) {
+	if len(values) == 0 {
+		return 0, 0
+	}
+	sum := 0
+	min = values[0]
+	for _, v := range values {
+		sum += v
+		if v < min {
+			min = v
+		}
+	}
+	avg = sum / len(values)
+	return avg, min
+}
+
+func toMbps(speed int) float64 {
+	if speed <= 0 {
+		return 0
+	}
+	return float64(speed) * 8.0 / 1024.0 / 1024.0
+}
+
+func summarizeEngineResources(engines []*state.Engine) (cpuAvg float64, memTotal int64) {
+	if len(engines) == 0 {
+		return 0, 0
+	}
+	var cpuSum float64
+	for _, e := range engines {
+		cpuSum += e.CPUPercent
+		memTotal += e.MemoryUsage
+	}
+	cpuAvg = cpuSum / float64(len(engines))
+	return cpuAvg, memTotal
+}
+
+func round3(value float64) float64 {
+	return math.Round(value*1000) / 1000
+}

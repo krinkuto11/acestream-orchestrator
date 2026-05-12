@@ -1,15 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { AlertCircle, Save, Undo2 } from 'lucide-react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { SettingsFormProvider, useSettingsForm } from '@/context/SettingsFormContext'
 import { useNotifications } from '@/context/NotificationContext'
 import { GeneralSettings } from './settings/GeneralSettings'
@@ -23,258 +12,257 @@ async function resolveAuthRequired(orchUrl) {
     const explicitStatus = await fetch(`${orchUrl}/api/v1/auth/status`)
     if (explicitStatus.ok) {
       const payload = await explicitStatus.json()
-      return {
-        required: Boolean(payload?.required),
-        source: 'auth-status-endpoint',
-      }
+      return { required: Boolean(payload?.required), source: 'auth-status-endpoint' }
     }
-  } catch {
-    // Fall back to protected endpoint probing if status endpoint is unavailable.
-  }
+  } catch { /* fall through */ }
 
   try {
     const probe = await fetch(`${orchUrl}/api/v1/engine-cache/stats`)
-    if (probe.status === 401 || probe.status === 403) {
-      return { required: true, source: 'protected-endpoint-probe' }
-    }
+    if (probe.status === 401 || probe.status === 403) return { required: true, source: 'protected-endpoint-probe' }
     return { required: false, source: 'protected-endpoint-probe' }
   } catch {
     return { required: false, source: 'fallback-open' }
   }
 }
 
+const NAV_SECTIONS = [
+  { id: 'general',      label: 'General' },
+  { id: 'orchestrator', label: 'Orchestrator' },
+  { id: 'vpn',          label: 'VPN' },
+  { id: 'proxy',        label: 'Proxy' },
+  { id: 'backup',       label: 'Backup' },
+]
+
+function SettingsNav({ active, onSelect }) {
+  return (
+    <div style={{ width: 180, flexShrink: 0, background: 'var(--bg-1)', border: '1px solid var(--line-soft)' }}>
+      {NAV_SECTIONS.map((s, i) => {
+        const isActive = s.id === active
+        return (
+          <div
+            key={s.id}
+            onClick={() => onSelect(s.id)}
+            style={{
+              padding: '9px 12px',
+              borderLeft: `2px solid ${isActive ? 'var(--acc-green)' : 'transparent'}`,
+              borderBottom: i < NAV_SECTIONS.length - 1 ? '1px solid var(--line-soft)' : 'none',
+              background: isActive ? 'var(--bg-2)' : 'transparent',
+              fontSize: 11,
+              color: isActive ? 'var(--fg-0)' : 'var(--fg-1)',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            <span style={{ color: 'var(--fg-3)' }}>›</span>
+            <span>{s.label}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function SettingsPageInner({
-  apiKey,
-  setApiKey,
-  refreshInterval,
-  setRefreshInterval,
-  maxEventsDisplay,
-  setMaxEventsDisplay,
+  refreshInterval, setRefreshInterval,
+  maxEventsDisplay, setMaxEventsDisplay,
   orchUrl,
 }) {
   const { addNotification } = useNotifications()
-  const {
-    authRequired,
-    authChecked,
-    dirtySections,
-    globalDirty,
-    globalSaving,
-  } = useSettingsForm()
+  const { authRequired, authChecked, dirtySections, globalDirty, globalSaving } = useSettingsForm()
 
-  const [activeTab, setActiveTab] = useState('general')
-  const [pendingTab, setPendingTab] = useState(null)
-  const [tabWarningOpen, setTabWarningOpen] = useState(false)
+  const [activeSection, setActiveSection] = useState('general')
   const [savingAll, setSavingAll] = useState(false)
+  const [leaveWarningVisible, setLeaveWarningVisible] = useState(false)
+  const [pendingSection, setPendingSection] = useState(null)
 
-  const authBlockedSections = useMemo(() => {
-    if (!authRequired || String(apiKey || '').trim()) return []
-    return dirtySections.filter((section) => section.requiresAuth)
-  }, [authRequired, apiKey, dirtySections])
-
-  const handleTabChange = useCallback((nextTab) => {
-    if (nextTab === activeTab) return
+  const handleNavSelect = useCallback((sectionId) => {
+    if (sectionId === activeSection) return
     if (globalDirty) {
-      setPendingTab(nextTab)
-      setTabWarningOpen(true)
+      setPendingSection(sectionId)
+      setLeaveWarningVisible(true)
       return
     }
-    setActiveTab(nextTab)
-  }, [activeTab, globalDirty])
+    setActiveSection(sectionId)
+  }, [activeSection, globalDirty])
 
-  const proceedTabChange = useCallback(() => {
-    if (pendingTab) {
-      setActiveTab(pendingTab)
-    }
-    setPendingTab(null)
-    setTabWarningOpen(false)
-  }, [pendingTab])
+  const confirmNavChange = useCallback(() => {
+    if (pendingSection) setActiveSection(pendingSection)
+    setPendingSection(null)
+    setLeaveWarningVisible(false)
+  }, [pendingSection])
 
   const discardAll = useCallback(() => {
-    dirtySections.forEach((section) => {
-      if (typeof section.discard === 'function') {
-        section.discard()
-      }
-    })
+    dirtySections.forEach(s => { if (typeof s.discard === 'function') s.discard() })
     addNotification('Discarded unsaved settings changes', 'info')
-  }, [addNotification, dirtySections])
+  }, [dirtySections, addNotification])
 
   const saveAll = useCallback(async () => {
     if (!dirtySections.length) return
-
-    if (authBlockedSections.length) {
-      const names = authBlockedSections.map((section) => section.title).join(', ')
-      addNotification(`Authentication required to save: ${names}`, 'warning')
-      return
-    }
-
     setSavingAll(true)
     try {
       for (const section of dirtySections) {
-        if (typeof section.save === 'function') {
-          await section.save()
-        }
+        if (typeof section.save === 'function') await section.save()
       }
       addNotification('Settings saved successfully', 'success')
-    } catch (error) {
-      addNotification(`Failed to save settings: ${error.message || String(error)}`, 'error')
+    } catch (err) {
+      addNotification(`Failed to save settings: ${err.message || String(err)}`, 'error')
     } finally {
       setSavingAll(false)
     }
-  }, [addNotification, authBlockedSections, dirtySections])
+  }, [addNotification, dirtySections])
 
   useEffect(() => {
-    const onBeforeUnload = (event) => {
+    const handler = (e) => {
       if (!globalDirty) return
-      event.preventDefault()
-      event.returnValue = ''
+      e.preventDefault(); e.returnValue = ''
     }
-
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
   }, [globalDirty])
 
-  useEffect(() => {
-    const onDocumentClick = (event) => {
-      if (!globalDirty) return
-
-      const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null
-      if (!anchor) return
-
-      const destination = anchor.getAttribute('href') || ''
-      if (!destination || destination.includes('/settings')) return
-
-      const shouldLeave = window.confirm('You have unsaved settings changes. Leave this page and lose changes?')
-      if (!shouldLeave) {
-        event.preventDefault()
-        event.stopPropagation()
-      }
-    }
-
-    document.addEventListener('click', onDocumentClick, true)
-    return () => document.removeEventListener('click', onDocumentClick, true)
-  }, [globalDirty])
+  const sharedProps = { orchUrl, authRequired }
 
   return (
-    <div className="space-y-6 pb-28">
-      <div className="flex items-center justify-between">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 112 }}>
+      {/* Page header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-          <p className="text-muted-foreground mt-1">Configure orchestrator behavior, networking, proxy pipelines, and diagnostics</p>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--fg-0)', margin: 0 }}>Settings</h1>
+          <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>runtime · persisted to app/config/*.json</div>
           {authChecked && (
-            <p className="mt-2 inline-flex items-center gap-2 rounded-full border border-slate-300/80 bg-slate-100/70 px-3 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-300">
-              <AlertCircle className="h-3.5 w-3.5" />
+            <div style={{
+              marginTop: 6,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '3px 8px',
+              background: 'var(--bg-2)', border: '1px solid var(--line)',
+              fontSize: 10, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
+            }}>
+              <span style={{ color: authRequired ? 'var(--acc-amber)' : 'var(--acc-green)' }}>
+                {authRequired ? '⚠' : '✓'}
+              </span>
               {authRequired
-                ? 'Server authentication is enforced for protected settings operations.'
-                : 'Server authentication is not enforced. Settings save is available without an API key.'}
-            </p>
+                ? 'Auth enforced · external API access requires API_KEY'
+                : 'Auth not enforced · API_KEY env var not set'}
+            </div>
+          )}
+        </div>
+        <div style={{ flex: 1 }}/>
+        <button
+          onClick={saveAll}
+          disabled={!globalDirty || globalSaving || savingAll}
+          className="tag tag-green"
+          style={{ cursor: !globalDirty ? 'not-allowed' : 'pointer', padding: '4px 14px', opacity: !globalDirty ? 0.4 : 1 }}
+        >
+          {savingAll ? '⟳ SAVING...' : '✓ SAVE'}
+        </button>
+        <button
+          onClick={saveAll}
+          disabled={!globalDirty || globalSaving || savingAll}
+          className="tag"
+          style={{ cursor: !globalDirty ? 'not-allowed' : 'pointer', padding: '4px 14px', opacity: !globalDirty ? 0.4 : 1 }}
+        >
+          SAVE &amp; REPROVISION
+        </button>
+      </div>
+
+      {/* Body: left nav + content */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <SettingsNav active={activeSection} onSelect={handleNavSelect}/>
+
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {activeSection === 'general' && (
+            <GeneralSettings
+              refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval}
+              maxEventsDisplay={maxEventsDisplay} setMaxEventsDisplay={setMaxEventsDisplay}
+              authRequired={authRequired}
+            />
+          )}
+          {activeSection === 'orchestrator' && (
+            <OrchestratorSettings orchUrl={orchUrl} authRequired={authRequired}/>
+          )}
+          {activeSection === 'vpn' && (
+            <VPNSettings orchUrl={orchUrl} authRequired={authRequired}/>
+          )}
+          {activeSection === 'proxy' && (
+            <ProxySettings orchUrl={orchUrl} authRequired={authRequired}/>
+          )}
+          {activeSection === 'backup' && (
+            <BackupSettings orchUrl={orchUrl}/>
           )}
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <TabsList className="grid w-full grid-cols-5 border-slate-700 bg-slate-900/90 text-slate-300 lg:w-[800px]">
-            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="general">General</TabsTrigger>
-            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="orchestrator">Orchestrator</TabsTrigger>
-            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="vpn">VPN</TabsTrigger>
-            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="proxy">Proxy</TabsTrigger>
-            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="backup">Backup</TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="general" forceMount className="space-y-6">
-          <GeneralSettings
-            apiKey={apiKey}
-            setApiKey={setApiKey}
-            refreshInterval={refreshInterval}
-            setRefreshInterval={setRefreshInterval}
-            maxEventsDisplay={maxEventsDisplay}
-            setMaxEventsDisplay={setMaxEventsDisplay}
-            authRequired={authRequired}
-          />
-        </TabsContent>
-
-        <TabsContent value="orchestrator" forceMount className="space-y-6">
-          <OrchestratorSettings
-            apiKey={apiKey}
-            orchUrl={orchUrl}
-            authRequired={authRequired}
-          />
-        </TabsContent>
-
-        <TabsContent value="vpn" forceMount className="space-y-6">
-          <VPNSettings
-            apiKey={apiKey}
-            orchUrl={orchUrl}
-            authRequired={authRequired}
-          />
-        </TabsContent>
-
-        <TabsContent value="proxy" forceMount className="space-y-6">
-          <ProxySettings
-            apiKey={apiKey}
-            orchUrl={orchUrl}
-            authRequired={authRequired}
-          />
-        </TabsContent>
-
-
-
-        <TabsContent value="backup" forceMount className="space-y-6">
-          <BackupSettings
-            apiKey={apiKey}
-            orchUrl={orchUrl}
-          />
-        </TabsContent>
-      </Tabs>
-
-      <div
-        className={`fixed bottom-4 left-1/2 z-50 w-[min(960px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-slate-300 bg-white/95 p-3 shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-950/95 transition-all ${globalDirty ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm text-slate-700 dark:text-slate-200">
-            <p className="font-semibold">Unsaved changes</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+      {/* Sticky unsaved-changes bar */}
+      {globalDirty && (
+        <div style={{
+          position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 50,
+          width: 'min(900px, calc(100vw - 2rem))',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--acc-amber-dim)',
+          padding: '10px 14px',
+          display: 'flex', alignItems: 'center', gap: 12,
+          boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+        }}>
+          <span className="dot pulse" style={{ color: 'var(--acc-amber)' }}/>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: 'var(--fg-0)', fontWeight: 600 }}>UNSAVED CHANGES</div>
+            <div style={{ fontSize: 10, color: 'var(--fg-3)' }}>
               {dirtySections.length} section{dirtySections.length === 1 ? '' : 's'} pending
-            </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              className="text-slate-700 hover:text-slate-900 dark:text-slate-100 dark:hover:text-slate-50"
-              onClick={discardAll}
-              disabled={globalSaving || savingAll}
-            >
-              <Undo2 className="mr-2 h-4 w-4" />
-              Discard
-            </Button>
-            <Button onClick={saveAll} disabled={globalSaving || savingAll || authBlockedSections.length > 0}>
-              <Save className="mr-2 h-4 w-4" />
-              {savingAll ? 'Saving...' : 'Save Changes'}
-            </Button>
+          <button
+            onClick={discardAll}
+            disabled={globalSaving || savingAll}
+            className="tag"
+            style={{ cursor: 'pointer', padding: '4px 12px', opacity: globalSaving || savingAll ? 0.5 : 1 }}
+          >
+            ↩ DISCARD
+          </button>
+          <button
+            onClick={saveAll}
+            disabled={globalSaving || savingAll}
+            className="tag tag-green"
+            style={{ cursor: 'pointer', padding: '4px 12px', opacity: globalSaving || savingAll ? 0.5 : 1 }}
+          >
+            {savingAll ? '⟳ SAVING...' : '✓ SAVE ALL'}
+          </button>
+        </div>
+      )}
+
+      {/* Leave-section warning */}
+      {leaveWarningVisible && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 100,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'var(--bg-1)', border: '1px solid var(--line)',
+            padding: 24, width: 360,
+          }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, color: 'var(--fg-0)', marginBottom: 8 }}>
+              Unsaved changes
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--fg-2)', marginBottom: 20 }}>
+              You have unsaved settings changes. Continue to the next section and keep editing, or stay here.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setLeaveWarningVisible(false)}
+                className="tag"
+                style={{ cursor: 'pointer', padding: '6px 16px' }}
+              >Stay Here</button>
+              <button
+                onClick={confirmNavChange}
+                className="tag tag-green"
+                style={{ cursor: 'pointer', padding: '6px 16px' }}
+              >Continue</button>
+            </div>
           </div>
         </div>
-        {authBlockedSections.length > 0 && (
-          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-            API key required to save protected sections: {authBlockedSections.map((section) => section.title).join(', ')}
-          </p>
-        )}
-      </div>
-
-      <Dialog open={tabWarningOpen} onOpenChange={setTabWarningOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Unsaved changes detected</DialogTitle>
-            <DialogDescription>
-              You have unsaved settings changes. You can continue to the next tab and keep editing, or stay on the current tab.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" className="text-foreground dark:text-slate-100" onClick={() => setTabWarningOpen(false)}>Stay Here</Button>
-            <Button onClick={proceedTabChange}>Continue to Tab</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      )}
     </div>
   )
 }
@@ -286,24 +274,17 @@ export function SettingsPage(props) {
 
   useEffect(() => {
     let mounted = true
-
-    const loadAuthStatus = async () => {
-      const result = await resolveAuthRequired(orchUrl)
+    resolveAuthRequired(orchUrl).then(result => {
       if (!mounted) return
       setAuthRequired(result.required)
       setAuthChecked(true)
-    }
-
-    loadAuthStatus()
-
-    return () => {
-      mounted = false
-    }
+    })
+    return () => { mounted = false }
   }, [orchUrl])
 
   return (
     <SettingsFormProvider authRequired={authRequired} authChecked={authChecked}>
-      <SettingsPageInner {...props} />
+      <SettingsPageInner {...props}/>
     </SettingsFormProvider>
   )
 }

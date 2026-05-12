@@ -45,5 +45,5 @@ Recovered nodes are not immediately trusted for destructive actions. A grace per
 Run:
 
 ```bash
-python -m pytest tests/test_emergency_mode.py -v
+cd app/orchestrator && go test ./... -run Emergency
 ```

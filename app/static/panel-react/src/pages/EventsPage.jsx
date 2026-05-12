@@ -39,7 +39,7 @@ const EVENT_TYPE_LABELS = {
   system: 'System'
 }
 
-export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
+export function EventsPage({ orchUrl, maxEventsDisplay = 100 }) {
   const [events, setEvents] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -55,7 +55,6 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
   const fetchEvents = useCallback(async () => {
     try {
       setLoading(true)
-      const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
 
       // Fetch events with filter
       const eventsUrl = filterType === 'all'
@@ -63,8 +62,8 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
         : `${orchUrl}/api/v1/events?event_type=${filterType}&limit=${displayLimit}`
 
       const [eventsRes, statsRes] = await Promise.all([
-        fetch(eventsUrl, { headers }),
-        fetch(`${orchUrl}/api/v1/events/stats`, { headers })
+        fetch(eventsUrl),
+        fetch(`${orchUrl}/api/v1/events/stats`)
       ])
 
       if (!eventsRes.ok || !statsRes.ok) {
@@ -83,7 +82,7 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
     } finally {
       setLoading(false)
     }
-  }, [orchUrl, apiKey, filterType, displayLimit])
+  }, [orchUrl, filterType, displayLimit])
 
   useEffect(() => {
     let eventSource = null
@@ -104,9 +103,6 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
       streamUrl.searchParams.set('limit', String(displayLimit))
       if (filterType !== 'all') {
         streamUrl.searchParams.set('event_type', filterType)
-      }
-      if (apiKey) {
-        streamUrl.searchParams.set('api_key', apiKey)
       }
 
       eventSource = new EventSource(streamUrl.toString())
@@ -152,7 +148,7 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
         eventSource.close()
       }
     }
-  }, [orchUrl, apiKey, filterType, displayLimit, fetchEvents])
+  }, [orchUrl, filterType, displayLimit, fetchEvents])
 
   const formatTimestamp = (timestamp) => {
     try {
@@ -192,18 +188,24 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Event Log</h1>
-          <p className="text-muted-foreground mt-1">
-            Track significant application events and operations
-          </p>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--fg-0)', margin: 0 }}>
+            Events
+          </h1>
+          <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>
+            audit log · significant application events
+          </div>
         </div>
-        <Button onClick={fetchEvents} variant="default" size="sm">
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
+        <div style={{ flex: 1 }}/>
+        <button
+          onClick={fetchEvents}
+          className="tag"
+          style={{ cursor: 'pointer', padding: '4px 12px' }}
+        >
+          ⟳ REFRESH
+        </button>
       </div>
 
       {/* Statistics Cards */}

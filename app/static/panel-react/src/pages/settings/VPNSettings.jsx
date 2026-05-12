@@ -1,44 +1,36 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Textarea } from '@/components/ui/textarea'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import { AlertCircle, Plus, ShieldCheck, ShieldOff, Trash2, Zap, ZapOff, UploadCloud, ChevronDown, ChevronUp } from 'lucide-react'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
 
 const PROVIDER_OPTIONS = [
-  { value: 'protonvpn', label: 'ProtonVPN' },
+  { value: 'airvpn', label: 'AirVPN' },
+  { value: 'cyberghost', label: 'CyberGhost' },
+  { value: 'expressvpn', label: 'ExpressVPN' },
+  { value: 'fastestvpn', label: 'FastestVPN' },
+  { value: 'giganews', label: 'Giganews' },
+  { value: 'hidemyass', label: 'HideMyAss' },
+  { value: 'ipvanish', label: 'IPVanish' },
+  { value: 'ivpn', label: 'IVPN' },
+  { value: 'mullvad', label: 'Mullvad' },
+  { value: 'nordvpn', label: 'NordVPN' },
+  { value: 'perfect privacy', label: 'Perfect Privacy' },
+  { value: 'privado', label: 'Privado' },
   { value: 'private internet access', label: 'Private Internet Access (PIA)' },
   { value: 'privatevpn', label: 'PrivateVPN' },
-  { value: 'perfect privacy', label: 'Perfect Privacy' },
-  { value: 'mullvad', label: 'Mullvad' },
+  { value: 'protonvpn', label: 'ProtonVPN' },
+  { value: 'purevpn', label: 'PureVPN' },
+  { value: 'slickvpn', label: 'SlickVPN' },
+  { value: 'surfshark', label: 'Surfshark' },
+  { value: 'torguard', label: 'Torguard' },
+  { value: 'vpnsecure', label: 'VPN Secure' },
+  { value: 'vpn unlimited', label: 'VPN Unlimited' },
+  { value: 'vyprvpn', label: 'VyprVPN' },
   { value: 'windscribe', label: 'Windscribe' },
   { value: 'custom', label: 'Custom Provider' },
 ]
 
 const PORT_FORWARDING_SUPPORTED = new Set([
-  'private internet access',
-  'protonvpn',
-  'perfect privacy',
-  'privatevpn',
+  'private internet access', 'protonvpn', 'perfect privacy', 'privatevpn',
 ])
 
 const VPN_SERVER_REFRESH_SOURCE_OPTIONS = [
@@ -57,6 +49,12 @@ const PROTON_CREDENTIALS_SOURCE_OPTIONS = [
   { value: 'settings', label: 'Store in Settings' },
 ]
 
+const PROTON_FILTER_OPTIONS = [
+  { value: 'include', label: 'Include' },
+  { value: 'exclude', label: 'Exclude' },
+  { value: 'only', label: 'Only' },
+]
+
 const DEFAULTS = {
   enabled: false,
   api_port: 8001,
@@ -65,6 +63,7 @@ const DEFAULTS = {
   restart_engines_on_reconnect: true,
   unhealthy_restart_timeout_s: 60,
   preferred_engines_per_vpn: 10,
+  max_engines_per_vpn: 15,
   protocol: 'wireguard',
   provider: 'protonvpn',
   regionsText: '',
@@ -83,6 +82,10 @@ const DEFAULTS = {
   vpn_servers_proton_password: '',
   vpn_servers_proton_totp_code: '',
   vpn_servers_proton_totp_secret: '',
+  vpn_servers_proton_filter_p2p: 'include',
+  vpn_servers_proton_filter_secure_core: 'include',
+  vpn_servers_proton_filter_tor: 'include',
+  wireguard_mtu: 0,
 }
 
 const toNumber = (value, fallback = 0) => {
@@ -105,12 +108,59 @@ const mask = (value, left = 4, right = 3) => {
   return `${text.slice(0, left)}...${text.slice(-right)}`
 }
 
-const parseRegionsInput = (value) => String(value || '')
-  .split(',')
-  .map((item) => item.trim())
-  .filter(Boolean)
+const parseRegionsInput = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean)
 
-export function VPNSettings({ apiKey, orchUrl, authRequired }) {
+const inputStyle = {
+  background: 'var(--bg-0)', border: '1px solid var(--line)', color: 'var(--fg-0)',
+  padding: '4px 8px', fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
+}
+const selectStyle = { ...inputStyle, cursor: 'pointer', minWidth: 140 }
+const textareaStyle = {
+  ...inputStyle, width: '100%', minHeight: 180, resize: 'vertical',
+  lineHeight: 1.5, display: 'block', boxSizing: 'border-box',
+}
+
+function Toggle({ checked, onChange, disabled }) {
+  return (
+    <button
+      type="button"
+      onClick={() => !disabled && onChange(!checked)}
+      style={{
+        width: 36, height: 18,
+        background: checked ? 'var(--acc-green-bg)' : 'var(--bg-2)',
+        border: `1px solid ${checked ? 'var(--acc-green-dim)' : 'var(--line)'}`,
+        borderRadius: 2, cursor: disabled ? 'not-allowed' : 'pointer',
+        display: 'flex', alignItems: 'center', padding: '0 2px',
+        transition: 'background 0.15s', opacity: disabled ? 0.5 : 1, flexShrink: 0,
+      }}
+    >
+      <div style={{
+        width: 12, height: 12,
+        background: checked ? 'var(--acc-green)' : 'var(--fg-3)',
+        borderRadius: 1,
+        transform: checked ? 'translateX(18px)' : 'translateX(0)',
+        transition: 'transform 0.15s, background 0.15s',
+      }}/>
+    </button>
+  )
+}
+
+function Pane({ title, description, children, actions }) {
+  return (
+    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-soft)' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <span className="label">{title}</span>
+          {description && <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>{description}</div>}
+        </div>
+        {actions}
+      </div>
+      <div style={{ padding: '12px 14px' }}>{children}</div>
+    </div>
+  )
+}
+
+export function VPNSettings({ orchUrl, authRequired }) {
   const sectionId = 'vpn'
   const { registerSection, unregisterSection, setSectionDirty, setSectionSaving } = useSettingsForm()
 
@@ -124,20 +174,19 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [message, setMessage] = useState('')
   const [refreshStatus, setRefreshStatus] = useState(null)
   const [refreshingServers, setRefreshingServers] = useState(false)
-
   const [dialogOpen, setDialogOpen] = useState(false)
   const [expertOpen, setExpertOpen] = useState(false)
   const [dialogLoading, setDialogLoading] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
-
-  // Per-Credential Settings
   const [credentialProvider, setCredentialProvider] = useState('protonvpn')
   const [credentialMode, setCredentialMode] = useState('wireguard')
   const [credentialRegions, setCredentialRegions] = useState('')
   const [credentialPortForwarding, setCredentialPortForwarding] = useState(true)
+  const [credentialAirVPNPorts, setCredentialAirVPNPorts] = useState('')
   const [wgText, setWgText] = useState('')
   const [openvpnUser, setOpenvpnUser] = useState('')
   const [openvpnPassword, setOpenvpnPassword] = useState('')
+  const [editingCredentialId, setEditingCredentialId] = useState(null)
 
   const dirty = useMemo(() => {
     return JSON.stringify(draft) !== JSON.stringify(initialState)
@@ -145,10 +194,14 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   }, [draft, initialState, credentials, initialCredentials])
 
   const sheetProviderNormalized = useMemo(() => normalizeProvider(credentialProvider), [credentialProvider])
-  const sheetProviderSupportsForwarding = useMemo(() => isForwardingSupported(sheetProviderNormalized), [sheetProviderNormalized])
+  const sheetProviderSupportsForwarding = useMemo(() => {
+    if (sheetProviderNormalized === 'airvpn') return credentialAirVPNPorts.trim() !== ''
+    return isForwardingSupported(sheetProviderNormalized)
+  }, [sheetProviderNormalized, credentialAirVPNPorts])
   const hasCredentials = credentials.length > 0
+  const refreshSourceOptions = VPN_SERVER_REFRESH_SOURCE_OPTIONS
   const vpnToggleDisabled = !hasCredentials && !draft.enabled
-  
+
   const leasesByCredentialId = useMemo(() => {
     const byCredentialId = new Map()
     const leases = Array.isArray(leaseSummary?.leases) ? leaseSummary.leases : []
@@ -166,9 +219,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       if (!response.ok) return
       const payload = await response.json()
       setLeaseSummary(payload)
-    } catch {
-      // non-blocking
-    }
+    } catch { /* non-blocking */ }
   }
 
   const fetchRefreshStatus = async () => {
@@ -177,9 +228,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       if (!response.ok) return
       const payload = await response.json()
       setRefreshStatus(payload)
-    } catch {
-      // non-blocking
-    }
+    } catch { /* non-blocking */ }
   }
 
   const fetchConfig = async () => {
@@ -187,19 +236,16 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setError('')
     try {
       let payload = null
-
       const consolidated = await fetch(`${orchUrl}/api/v1/settings`)
       if (consolidated.ok) {
         const settingsBundle = await consolidated.json().catch(() => ({}))
         payload = settingsBundle?.vpn_settings || null
       }
-
       if (!payload) {
         const response = await fetch(`${orchUrl}/api/v1/settings/vpn`)
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         payload = await response.json()
       }
-
       const normalized = {
         enabled: Boolean(payload?.enabled),
         api_port: toNumber(payload?.api_port, DEFAULTS.api_port),
@@ -208,6 +254,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         restart_engines_on_reconnect: Boolean(payload?.restart_engines_on_reconnect),
         unhealthy_restart_timeout_s: toNumber(payload?.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
         preferred_engines_per_vpn: toNumber(payload?.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn),
+        max_engines_per_vpn: toNumber(payload?.max_engines_per_vpn, DEFAULTS.max_engines_per_vpn),
         protocol: String(payload?.protocol || DEFAULTS.protocol).toLowerCase(),
         provider: normalizeProvider(payload?.provider || DEFAULTS.provider),
         regionsText: Array.isArray(payload?.regions) ? payload.regions.join(', ') : '',
@@ -226,8 +273,11 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         vpn_servers_proton_password: String(payload?.vpn_servers_proton_password || ''),
         vpn_servers_proton_totp_code: String(payload?.vpn_servers_proton_totp_code || ''),
         vpn_servers_proton_totp_secret: String(payload?.vpn_servers_proton_totp_secret || ''),
+        vpn_servers_proton_filter_p2p: String(payload?.vpn_servers_proton_filter_p2p || 'include'),
+        vpn_servers_proton_filter_secure_core: String(payload?.vpn_servers_proton_filter_secure_core || 'include'),
+        vpn_servers_proton_filter_tor: String(payload?.vpn_servers_proton_filter_tor || 'include'),
+        wireguard_mtu: toNumber(payload?.wireguard_mtu, DEFAULTS.wireguard_mtu),
       }
-
       setInitialState(normalized)
       setDraft(normalized)
       const loadedCredentials = Array.isArray(payload?.credentials) ? payload.credentials : []
@@ -243,26 +293,15 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     }
   }
 
-  useEffect(() => {
-    fetchConfig()
-  }, [orchUrl])
+  useEffect(() => { fetchConfig() }, [orchUrl])
 
   useEffect(() => {
     const save = async () => {
-      if (authRequired && !String(apiKey || '').trim()) {
-        throw new Error('API key required by server for VPN settings updates')
-      }
-
       setSectionSaving(sectionId, true)
       setError('')
       setMessage('')
-
       try {
         const headers = { 'Content-Type': 'application/json' }
-        if (String(apiKey || '').trim()) {
-          headers.Authorization = `Bearer ${String(apiKey).trim()}`
-        }
-
         const payload = {
           enabled: Boolean(draft.enabled),
           api_port: toNumber(draft.api_port, DEFAULTS.api_port),
@@ -271,9 +310,10 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           restart_engines_on_reconnect: Boolean(draft.restart_engines_on_reconnect),
           unhealthy_restart_timeout_s: toNumber(draft.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
           preferred_engines_per_vpn: Math.max(1, toNumber(draft.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn)),
-          protocol: draft.protocol, // preserving backend schema
-          provider: draft.provider, // preserving backend schema
-          regions: parseRegionsInput(draft.regionsText), // preserving backend schema
+          max_engines_per_vpn: Math.max(1, toNumber(draft.max_engines_per_vpn, DEFAULTS.max_engines_per_vpn)),
+          protocol: draft.protocol,
+          provider: draft.provider,
+          regions: parseRegionsInput(draft.regionsText),
           credentials,
           trigger_migration: Boolean(draft.enabled) !== Boolean(initialState.enabled),
           vpn_servers_auto_refresh: Boolean(draft.vpn_servers_auto_refresh),
@@ -291,19 +331,18 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           vpn_servers_proton_password: String(draft.vpn_servers_proton_password || '').trim() || null,
           vpn_servers_proton_totp_code: String(draft.vpn_servers_proton_totp_code || '').trim() || null,
           vpn_servers_proton_totp_secret: String(draft.vpn_servers_proton_totp_secret || '').trim() || null,
+          vpn_servers_proton_filter_p2p: draft.vpn_servers_proton_filter_p2p,
+          vpn_servers_proton_filter_secure_core: draft.vpn_servers_proton_filter_secure_core,
+          vpn_servers_proton_filter_tor: draft.vpn_servers_proton_filter_tor,
+          wireguard_mtu: Math.max(0, toNumber(draft.wireguard_mtu, DEFAULTS.wireguard_mtu)),
         }
-
         const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
+          method: 'POST', headers, body: JSON.stringify(payload),
         })
-
         if (!response.ok) {
           const failure = await response.json().catch(() => ({}))
           throw new Error(failure?.detail || `HTTP ${response.status}`)
         }
-
         const result = await response.json().catch(() => null)
         setInitialState({ ...draft })
         setInitialCredentials([...credentials])
@@ -330,30 +369,11 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       setMessage('')
     }
 
-    registerSection(sectionId, {
-      title: 'VPN',
-      requiresAuth: true,
-      save,
-      discard,
-    })
-
+    registerSection(sectionId, { title: 'VPN', requiresAuth: true, save, discard })
     return () => unregisterSection(sectionId)
-  }, [
-    apiKey,
-    authRequired,
-    credentials,
-    draft,
-    initialState,
-    orchUrl,
-    registerSection,
-    setSectionDirty,
-    setSectionSaving,
-    unregisterSection,
-  ])
+  }, [authRequired, credentials, draft, initialState, orchUrl, registerSection, setSectionDirty, setSectionSaving, unregisterSection])
 
-  useEffect(() => {
-    setSectionDirty(sectionId, dirty)
-  }, [dirty, setSectionDirty])
+  useEffect(() => { setSectionDirty(sectionId, dirty) }, [dirty, setSectionDirty])
 
   const update = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }))
@@ -363,26 +383,17 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
   const queueVpnEnabled = (value) => {
     const enabled = Boolean(value)
-
     if (enabled && !hasCredentials) {
       setError('Add at least one VPN credential before enabling VPN routing')
       return
     }
-
     setDraft((prev) => ({ ...prev, enabled }))
     setError('')
     setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} queued; save changes to apply`)
   }
 
-  const handleDragOver = (e) => {
-    e.preventDefault()
-    setIsDragging(true)
-  }
-
-  const handleDragLeave = (e) => {
-    e.preventDefault()
-    setIsDragging(false)
-  }
+  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true) }
+  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false) }
 
   const handleDrop = async (e) => {
     e.preventDefault()
@@ -400,61 +411,57 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setDialogLoading(true)
     setError('')
     setMessage('')
-
     try {
+      const airVPNPorts = sheetProviderNormalized === 'airvpn'
+        ? credentialAirVPNPorts.split(',').map((p) => parseInt(p.trim(), 10)).filter((n) => n > 0 && n <= 65535)
+        : []
+
       let payload = {
         provider: sheetProviderNormalized,
         protocol: credentialMode,
         regions: parseRegionsInput(credentialRegions),
         port_forwarding: Boolean(credentialPortForwarding && sheetProviderSupportsForwarding),
+        ...(airVPNPorts.length > 0 ? { firewall_vpn_input_ports: airVPNPorts } : {}),
       }
-
       if (credentialMode === 'wireguard') {
         const confText = String(wgText || '').trim()
-        if (!confText) {
-          throw new Error('Wireguard .conf content is required')
-        }
-
+        if (!confText) throw new Error('Wireguard .conf content is required')
         const parseResponse = await fetch(`${orchUrl}/api/v1/vpn/parse-wireguard`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ file_content: confText }),
         })
         const parsed = await parseResponse.json().catch(() => null)
-        if (!parseResponse.ok) {
-          throw new Error(parsed?.detail?.message || parsed?.detail || `HTTP ${parseResponse.status}`)
-        }
-
+        if (!parseResponse.ok) throw new Error(parsed?.detail?.message || parsed?.detail || `HTTP ${parseResponse.status}`)
         payload = {
-          ...payload,
-          ...parsed,
+          ...payload, ...parsed,
           addresses: parsed?.address || (Array.isArray(parsed?.addresses) ? parsed.addresses.join(',') : ''),
           source: 'sheet-paste.conf',
+          conf_text: confText,
+          file_content: confText,
         }
       } else {
         const username = String(openvpnUser || '').trim()
         const password = String(openvpnPassword || '').trim()
-        if (!username || !password) {
-          throw new Error('OpenVPN username and password are required')
-        }
-
-        payload = {
-          ...payload,
-          openvpn_user: username,
-          openvpn_password: password,
-          username,
-          password,
-        }
+        if (!username || !password) throw new Error('OpenVPN username and password are required')
+        payload = { ...payload, openvpn_user: username, openvpn_password: password, username, password }
       }
-
-      const credentialId = String(payload?.id || `cred-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`)
-      setCredentials((prev) => [...prev, { ...payload, id: credentialId }])
-      setMessage('Credential added to draft; save changes to apply')
+      const credentialId = String(editingCredentialId || payload?.id || `cred-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      if (editingCredentialId) {
+        // Replace existing credential in draft
+        setCredentials((prev) => prev.map((c) => (String(c?.id || '') === String(editingCredentialId) ? { ...c, ...payload, id: credentialId } : c)))
+        setMessage('Credential edited in draft; save changes to apply')
+      } else {
+        setCredentials((prev) => [...prev, { ...payload, id: credentialId }])
+        setMessage('Credential added to draft; save changes to apply')
+      }
       setDialogOpen(false)
       setWgText('')
       setOpenvpnUser('')
       setOpenvpnPassword('')
       setCredentialRegions('')
+      setCredentialAirVPNPorts('')
+      setEditingCredentialId(null)
     } catch (addError) {
       setError(`Failed to add credential: ${addError.message || String(addError)}`)
     } finally {
@@ -463,44 +470,39 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   }
 
   const removeCredential = (credentialId) => {
-    setCredentials((prev) => prev.filter((c) => String(c?.id || '') !== String(credentialId || '')))
+    setCredentials((prev) => {
+      const nextCredentials = prev.filter((c) => String(c?.id || '') !== String(credentialId || ''))
+      return nextCredentials
+    })
     setError('')
     setMessage('Credential removal queued; save changes to apply')
   }
 
   const refreshServersNow = async () => {
-    if (authRequired && !String(apiKey || '').trim()) {
-      setError('API key required by server for manual VPN server refresh')
-      return
-    }
-
     setRefreshingServers(true)
     setError('')
     setMessage('')
     try {
-      const headers = { 'Content-Type': 'application/json' }
-      if (String(apiKey || '').trim()) {
-        headers.Authorization = `Bearer ${String(apiKey).trim()}`
-      }
-
+      const refreshSource = String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source)
       const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh`, {
-        method: 'POST',
-        headers,
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          source: draft.vpn_servers_refresh_source,
+          source: refreshSource,
           gluetun_json_mode: draft.vpn_servers_gluetun_json_mode,
           reason: 'manual-ui',
+          filters: refreshSource === 'proton_paid' ? {
+            p2p: draft.vpn_servers_proton_filter_p2p,
+            secure_core: draft.vpn_servers_proton_filter_secure_core,
+            tor: draft.vpn_servers_proton_filter_tor,
+          } : null
         }),
       })
-
       if (!response.ok) {
         const failure = await response.json().catch(() => ({}))
         throw new Error(failure?.detail || `HTTP ${response.status}`)
       }
-
       const result = await response.json().catch(() => ({}))
-      const source = String(result?.source || draft.vpn_servers_refresh_source)
-      setMessage(`VPN server list refreshed from ${source}`)
+      setMessage(`VPN server list refreshed from ${String(result?.source || draft.vpn_servers_refresh_source)}`)
       await fetchRefreshStatus()
     } catch (refreshError) {
       setError(`Failed to refresh VPN server list: ${refreshError.message || String(refreshError)}`)
@@ -511,359 +513,447 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
   if (loading) {
     return (
-      <Card>
-        <CardContent className="py-10 text-sm text-muted-foreground">Loading VPN settings...</CardContent>
-      </Card>
+      <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-soft)', padding: '32px 14px', textAlign: 'center', fontSize: 11, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
+        loading vpn settings...
+      </div>
     )
   }
 
   return (
-    <div className="space-y-5">
-      {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {message && <div style={{ fontSize: 11, color: 'var(--acc-green)', fontFamily: 'var(--font-mono)', padding: '4px 0' }}>{message}</div>}
+      {error && <div style={{ fontSize: 11, color: 'var(--acc-red)', fontFamily: 'var(--font-mono)', padding: '4px 0' }}>{error}</div>}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            {draft.enabled ? <ShieldCheck className="h-5 w-5 text-emerald-500" /> : <ShieldOff className="h-5 w-5 text-slate-400" />}
-            VPN Controller Settings
-          </CardTitle>
-          <CardDescription>Static VPN controller behavior participates in global save and unsaved-change protection.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <SettingRow
-            label="Enable VPN Routing"
-            description={
-              Boolean(initialState.enabled)
-                ? 'Disable to stop new engine scheduling on managed VPN nodes.'
-                : 'Route new engine traffic through managed VPN nodes.'
-            }
-            warning={!hasCredentials ? 'Add at least one credential in the pool to enable routing.' : undefined}
+      {/* VPN Controller */}
+      <Pane
+        title={`${draft.enabled ? '⛨' : '○'} VPN CONTROLLER SETTINGS`}
+        description="Static VPN controller behavior participates in global save and unsaved-change protection."
+      >
+        <SettingRow
+          label="Enable VPN Routing"
+          description={Boolean(initialState.enabled) ? 'Disable to stop new engine scheduling on managed VPN nodes.' : 'Route new engine traffic through managed VPN nodes.'}
+          warning={!hasCredentials ? 'Add at least one credential in the pool to enable routing.' : undefined}
+        >
+          <Toggle checked={Boolean(draft.enabled)} disabled={vpnToggleDisabled} onChange={queueVpnEnabled}/>
+        </SettingRow>
+        <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
+          <input type="number" min={1} max={100} value={draft.preferred_engines_per_vpn} style={inputStyle} onChange={(e) => update('preferred_engines_per_vpn', toNumber(e.target.value, DEFAULTS.preferred_engines_per_vpn))}/>
+        </SettingRow>
+        <SettingRow label="Max Engines per VPN Node" description="Hard limit to prevent resource saturation per node.">
+          <input type="number" min={1} max={100} value={draft.max_engines_per_vpn} style={inputStyle} onChange={(e) => update('max_engines_per_vpn', toNumber(e.target.value, DEFAULTS.max_engines_per_vpn))}/>
+        </SettingRow>
+
+        {/* Expert settings toggle */}
+        <div style={{ borderTop: '1px solid var(--line-soft)', marginTop: 12, paddingTop: 12 }}>
+          <button
+            type="button"
+            onClick={() => setExpertOpen(v => !v)}
+            style={{ background: 'none', border: '1px solid var(--line)', color: 'var(--fg-2)', padding: '4px 12px', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer' }}
           >
-            <Switch
-              checked={Boolean(draft.enabled)}
-              disabled={vpnToggleDisabled}
-              onCheckedChange={queueVpnEnabled}
-            />
-          </SettingRow>
+            {expertOpen ? '▲ HIDE EXPERT SETTINGS' : '▼ SHOW EXPERT SETTINGS'}
+          </button>
+        </div>
 
-          <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
-            <Input type="number" min={1} max={100} value={draft.preferred_engines_per_vpn} onChange={(e) => update('preferred_engines_per_vpn', toNumber(e.target.value, DEFAULTS.preferred_engines_per_vpn))} className="max-w-xs" />
-          </SettingRow>
+        {expertOpen && (
+          <div style={{ marginTop: 12 }}>
+            <SettingRow label="Gluetun API Port" description="Must match Gluetun HTTP control server port.">
+              <input type="number" min={1} max={65535} value={draft.api_port} style={inputStyle} onChange={(e) => update('api_port', toNumber(e.target.value, DEFAULTS.api_port))}/>
+            </SettingRow>
+            <SettingRow label="WireGuard MTU" description="Force a specific MTU for the WireGuard tunnel. Set to 0 to let Gluetun auto-detect.">
+              <input type="number" min={0} max={9000} value={draft.wireguard_mtu} style={inputStyle} placeholder="0 = auto-detect" onChange={(e) => update('wireguard_mtu', toNumber(e.target.value, DEFAULTS.wireguard_mtu))}/>
+            </SettingRow>
+            <SettingRow label="Health Check Interval (s)" description="VPN health polling cadence.">
+              <input type="number" min={1} max={120} value={draft.health_check_interval_s} style={inputStyle} onChange={(e) => update('health_check_interval_s', toNumber(e.target.value, DEFAULTS.health_check_interval_s))}/>
+            </SettingRow>
+            <SettingRow label="Port Cache TTL (s)" description="Forwarded-port cache TTL.">
+              <input type="number" min={1} max={300} value={draft.port_cache_ttl_s} style={inputStyle} onChange={(e) => update('port_cache_ttl_s', toNumber(e.target.value, DEFAULTS.port_cache_ttl_s))}/>
+            </SettingRow>
+            <SettingRow label="Unhealthy Restart Timeout (s)" description="Restart VPN node after this unhealthy duration.">
+              <input type="number" min={10} max={600} value={draft.unhealthy_restart_timeout_s} style={inputStyle} onChange={(e) => update('unhealthy_restart_timeout_s', toNumber(e.target.value, DEFAULTS.unhealthy_restart_timeout_s))}/>
+            </SettingRow>
+            <SettingRow label="Restart Engines on VPN Reconnect" description="Restart engines when VPN node reconnects to refresh routes.">
+              <Toggle checked={Boolean(draft.restart_engines_on_reconnect)} onChange={(value) => update('restart_engines_on_reconnect', Boolean(value))}/>
+            </SettingRow>
 
-          <Collapsible open={expertOpen} onOpenChange={setExpertOpen} className="w-full">
-            <div className="flex items-center mt-6 mb-2">
-              <div className="flex-grow border-t border-muted"></div>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="mx-2 text-xs uppercase tracking-wider text-muted-foreground hover:bg-transparent">
-                  {expertOpen ? 'Hide Expert Settings' : 'Show Expert Settings'}
-                  {expertOpen ? <ChevronUp className="ml-2 h-3 w-3" /> : <ChevronDown className="ml-2 h-3 w-3" />}
-                </Button>
-              </CollapsibleTrigger>
-              <div className="flex-grow border-t border-muted"></div>
-            </div>
-            
-            <CollapsibleContent className="space-y-3 pt-2">
-              <SettingRow label="Gluetun API Port" description="Must match Gluetun HTTP control server port.">
-                <Input type="number" min={1} max={65535} value={draft.api_port} onChange={(e) => update('api_port', toNumber(e.target.value, DEFAULTS.api_port))} className="max-w-xs" />
+            {/* VPN Server Refresh */}
+            <div style={{ borderTop: '1px solid var(--line-soft)', marginTop: 12, paddingTop: 12 }}>
+              <div className="label" style={{ marginBottom: 10 }}>VPN SERVER LIST REFRESH</div>
+              <SettingRow label="Refresh Source" description="Choose where server catalog updates come from.">
+                <select value={draft.vpn_servers_refresh_source} onChange={(e) => update('vpn_servers_refresh_source', e.target.value)} style={selectStyle}>
+                  {refreshSourceOptions.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
               </SettingRow>
-
-              <SettingRow label="Health Check Interval (s)" description="VPN health polling cadence.">
-                <Input type="number" min={1} max={120} value={draft.health_check_interval_s} onChange={(e) => update('health_check_interval_s', toNumber(e.target.value, DEFAULTS.health_check_interval_s))} className="max-w-xs" />
+              <SettingRow label="Automatic Refresh" description="Periodically refresh VPN provider server lists.">
+                <Toggle checked={Boolean(draft.vpn_servers_auto_refresh)} onChange={(value) => update('vpn_servers_auto_refresh', Boolean(value))}/>
               </SettingRow>
-
-              <SettingRow label="Port Cache TTL (s)" description="Forwarded-port cache TTL.">
-                <Input type="number" min={1} max={300} value={draft.port_cache_ttl_s} onChange={(e) => update('port_cache_ttl_s', toNumber(e.target.value, DEFAULTS.port_cache_ttl_s))} className="max-w-xs" />
+              <SettingRow label="Refresh Period (s)" description="How often automatic refresh should run.">
+                <input type="number" min={60} max={604800} value={draft.vpn_servers_refresh_period_s} style={inputStyle} onChange={(e) => update('vpn_servers_refresh_period_s', toNumber(e.target.value, DEFAULTS.vpn_servers_refresh_period_s))}/>
               </SettingRow>
-
-              <SettingRow label="Unhealthy Restart Timeout (s)" description="Restart VPN node after this unhealthy duration.">
-                <Input type="number" min={10} max={600} value={draft.unhealthy_restart_timeout_s} onChange={(e) => update('unhealthy_restart_timeout_s', toNumber(e.target.value, DEFAULTS.unhealthy_restart_timeout_s))} className="max-w-xs" />
+              <SettingRow label="servers.json Write Mode" description="How refreshed data is applied to servers.json.">
+                <select value={draft.vpn_servers_gluetun_json_mode} onChange={(e) => update('vpn_servers_gluetun_json_mode', e.target.value)} style={selectStyle}>
+                  {GLUETUN_JSON_MODE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
               </SettingRow>
-
-              <SettingRow label="Restart Engines on VPN Reconnect" description="Restart engines when VPN node reconnects to refresh routes.">
-                <Switch checked={Boolean(draft.restart_engines_on_reconnect)} onCheckedChange={(value) => update('restart_engines_on_reconnect', Boolean(value))} />
+              <SettingRow label="Storage Path (Optional)" description="Directory where servers json files are written.">
+                <input value={draft.vpn_servers_storage_path} placeholder="/data/gluetun" style={{ ...inputStyle, width: 200 }} onChange={(e) => update('vpn_servers_storage_path', e.target.value)}/>
               </SettingRow>
-
-              <div className="pt-4 border-t border-border/50 space-y-3">
-                <div className="text-sm font-medium">VPN Server List Refresh</div>
-
-                <SettingRow label="Refresh Source" description="Choose where server catalog updates come from.">
-                  <Select value={draft.vpn_servers_refresh_source} onValueChange={(value) => update('vpn_servers_refresh_source', value)}>
-                    <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
-                    <SelectContent className="dark">
-                      {VPN_SERVER_REFRESH_SOURCE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              {draft.vpn_servers_refresh_source === 'gluetun_official' && (
+                <SettingRow label="Official Catalog URL" description="Official Gluetun catalog URL (override if needed).">
+                  <input value={draft.vpn_servers_official_url} style={{ ...inputStyle, width: 280 }} onChange={(e) => update('vpn_servers_official_url', e.target.value)}/>
+                </SettingRow>
+              )}
+              {draft.vpn_servers_refresh_source === 'proton_paid' && (
+                <>
+                  <SettingRow label="Proton Credentials Source" description="Use environment variables or persisted settings values.">
+                    <select value={draft.vpn_servers_proton_credentials_source} onChange={(e) => update('vpn_servers_proton_credentials_source', e.target.value)} style={selectStyle}>
+                      {PROTON_CREDENTIALS_SOURCE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </SettingRow>
-
-                <SettingRow label="Automatic Refresh" description="Periodically refresh VPN provider server lists.">
-                  <Switch checked={Boolean(draft.vpn_servers_auto_refresh)} onCheckedChange={(value) => update('vpn_servers_auto_refresh', Boolean(value))} />
-                </SettingRow>
-
-                <SettingRow label="Refresh Period (s)" description="How often automatic refresh should run.">
-                  <Input type="number" min={60} max={604800} value={draft.vpn_servers_refresh_period_s} onChange={(e) => update('vpn_servers_refresh_period_s', toNumber(e.target.value, DEFAULTS.vpn_servers_refresh_period_s))} className="max-w-xs" />
-                </SettingRow>
-
-                <SettingRow label="servers.json Write Mode" description="How refreshed data is applied to servers.json.">
-                  <Select value={draft.vpn_servers_gluetun_json_mode} onValueChange={(value) => update('vpn_servers_gluetun_json_mode', value)}>
-                    <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
-                    <SelectContent className="dark">
-                      {GLUETUN_JSON_MODE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </SettingRow>
-
-                <SettingRow label="Storage Path (Optional)" description="Directory where servers-proton.json / servers-official.json / servers.json are written.">
-                  <Input value={draft.vpn_servers_storage_path} onChange={(e) => update('vpn_servers_storage_path', e.target.value)} placeholder="/data/gluetun" className="max-w-md" />
-                </SettingRow>
-
-                {draft.vpn_servers_refresh_source === 'gluetun_official' && (
-                  <SettingRow label="Official Catalog URL" description="Official Gluetun catalog URL (override if needed).">
-                    <Input value={draft.vpn_servers_official_url} onChange={(e) => update('vpn_servers_official_url', e.target.value)} className="max-w-md" />
+                    </select>
                   </SettingRow>
-                )}
-
-                {draft.vpn_servers_refresh_source === 'proton_paid' && (
-                  <>
-                    <SettingRow label="Proton Credentials Source" description="Use environment variables or persisted settings values.">
-                      <Select value={draft.vpn_servers_proton_credentials_source} onValueChange={(value) => update('vpn_servers_proton_credentials_source', value)}>
-                        <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
-                        <SelectContent className="dark">
-                          {PROTON_CREDENTIALS_SOURCE_OPTIONS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                  {draft.vpn_servers_proton_credentials_source === 'env' ? (
+                    <>
+                      <SettingRow label="Username Env Var" description="Environment variable containing Proton username.">
+                        <input value={draft.vpn_servers_proton_username_env} style={{ ...inputStyle, width: 200 }} onChange={(e) => update('vpn_servers_proton_username_env', e.target.value)}/>
+                      </SettingRow>
+                      <SettingRow label="Password Env Var" description="Environment variable containing Proton password.">
+                        <input value={draft.vpn_servers_proton_password_env} style={{ ...inputStyle, width: 200 }} onChange={(e) => update('vpn_servers_proton_password_env', e.target.value)}/>
+                      </SettingRow>
+                      <SettingRow label="TOTP Code Env Var" description="Optional one-time TOTP code variable.">
+                        <input value={draft.vpn_servers_proton_totp_code_env} style={{ ...inputStyle, width: 200 }} onChange={(e) => update('vpn_servers_proton_totp_code_env', e.target.value)}/>
+                      </SettingRow>
+                      <SettingRow label="TOTP Secret Env Var" description="Optional base32 TOTP secret variable.">
+                        <input value={draft.vpn_servers_proton_totp_secret_env} style={{ ...inputStyle, width: 200 }} onChange={(e) => update('vpn_servers_proton_totp_secret_env', e.target.value)}/>
+                      </SettingRow>
+                    </>
+                  ) : (
+                    <>
+                      <SettingRow label="Proton Username" description="Stored in settings for automated refresh.">
+                        <input value={draft.vpn_servers_proton_username} style={{ ...inputStyle, width: 200 }} onChange={(e) => update('vpn_servers_proton_username', e.target.value)}/>
+                      </SettingRow>
+                      <SettingRow label="Proton Password" description="Stored in settings for automated refresh.">
+                        <input type="password" value={draft.vpn_servers_proton_password} style={{ ...inputStyle, width: 200 }} onChange={(e) => update('vpn_servers_proton_password', e.target.value)}/>
+                      </SettingRow>
+                      <SettingRow label="TOTP Code (Optional)" description="One-time code; if empty, TOTP secret can be used.">
+                        <input value={draft.vpn_servers_proton_totp_code} style={inputStyle} onChange={(e) => update('vpn_servers_proton_totp_code', e.target.value)}/>
+                      </SettingRow>
+                      <SettingRow label="TOTP Secret (Optional)" description="Base32 secret for automatic token generation.">
+                        <input type="password" value={draft.vpn_servers_proton_totp_secret} style={{ ...inputStyle, width: 200 }} onChange={(e) => update('vpn_servers_proton_totp_secret', e.target.value)}/>
+                      </SettingRow>
+                    </>
+                  )}
+                  {/* Proton Server Filters */}
+                  <div style={{ background: 'var(--bg-2)', padding: '10px 12px', marginTop: 10, border: '1px solid var(--line)' }}>
+                    <div className="label" style={{ fontSize: 10, marginBottom: 8, color: 'var(--fg-2)' }}>CATALOG FILTERS</div>
+                    <SettingRow label="P2P Servers" compact>
+                      <select value={draft.vpn_servers_proton_filter_p2p} onChange={(e) => update('vpn_servers_proton_filter_p2p', e.target.value)} style={selectStyle}>
+                        {PROTON_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
                     </SettingRow>
+                    <SettingRow label="Secure Core" compact>
+                      <select value={draft.vpn_servers_proton_filter_secure_core} onChange={(e) => update('vpn_servers_proton_filter_secure_core', e.target.value)} style={selectStyle}>
+                        {PROTON_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </SettingRow>
+                    <SettingRow label="Tor Servers" compact>
+                      <select value={draft.vpn_servers_proton_filter_tor} onChange={(e) => update('vpn_servers_proton_filter_tor', e.target.value)} style={selectStyle}>
+                        {PROTON_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </SettingRow>
+                  </div>
+                </>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={refreshServersNow}
+                  disabled={refreshingServers}
+                  style={{ background: 'none', border: '1px solid var(--line)', color: 'var(--fg-1)', padding: '5px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: refreshingServers ? 'not-allowed' : 'pointer', opacity: refreshingServers ? 0.5 : 1 }}
+                >
+                  {refreshingServers ? '⟳ REFRESHING...' : '↺ REFRESH VPN SERVER LIST NOW'}
+                </button>
+                {refreshStatus?.last_finished_at && (
+                  <span style={{ fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
+                    Last run: {new Date(refreshStatus.last_finished_at).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </Pane>
 
-                    {draft.vpn_servers_proton_credentials_source === 'env' ? (
-                      <div className="space-y-3">
-                        <SettingRow label="Username Env Var" description="Environment variable containing Proton username.">
-                          <Input value={draft.vpn_servers_proton_username_env} onChange={(e) => update('vpn_servers_proton_username_env', e.target.value)} className="max-w-md" />
-                        </SettingRow>
-                        <SettingRow label="Password Env Var" description="Environment variable containing Proton password.">
-                          <Input value={draft.vpn_servers_proton_password_env} onChange={(e) => update('vpn_servers_proton_password_env', e.target.value)} className="max-w-md" />
-                        </SettingRow>
-                        <SettingRow label="TOTP Code Env Var" description="Optional one-time TOTP code variable.">
-                          <Input value={draft.vpn_servers_proton_totp_code_env} onChange={(e) => update('vpn_servers_proton_totp_code_env', e.target.value)} className="max-w-md" />
-                        </SettingRow>
-                        <SettingRow label="TOTP Secret Env Var" description="Optional base32 TOTP secret variable.">
-                          <Input value={draft.vpn_servers_proton_totp_secret_env} onChange={(e) => update('vpn_servers_proton_totp_secret_env', e.target.value)} className="max-w-md" />
-                        </SettingRow>
+      {/* Credential Pool */}
+      <Pane
+        title="CREDENTIAL POOL"
+        description="Credential changes are part of the VPN draft and are applied only when you save."
+        actions={
+          <button
+            type="button"
+            onClick={() => {
+              setEditingCredentialId(null)
+              setCredentialProvider('protonvpn')
+              setCredentialMode('wireguard')
+              setCredentialRegions('')
+              setCredentialPortForwarding(true)
+              setCredentialAirVPNPorts('')
+              setWgText('')
+              setOpenvpnUser('')
+              setOpenvpnPassword('')
+              setDialogOpen(true)
+            }}
+            className="tag tag-green"
+            style={{ cursor: 'pointer', padding: '4px 10px', fontSize: 10 }}
+          >
+            + ADD CREDENTIAL
+          </button>
+        }
+      >
+        {/* Stats */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+          <span className="tag" style={{ fontSize: 9 }}>Total: {credentials.length}</span>
+          <span className="tag" style={{ fontSize: 9 }}>Leased: {leaseSummary?.leased ?? 0}</span>
+          <span className="tag" style={{ fontSize: 9 }}>Available: {leaseSummary?.available ?? 0}</span>
+        </div>
+
+        {/* Credentials table */}
+        <table className="data" style={{ width: '100%' }}>
+          <thead>
+            <tr>
+              <th>PROVIDER / PROTOCOL</th>
+              <th>IDENTIFIER</th>
+              <th>STATUS</th>
+              <th>PORT FWD</th>
+              <th style={{ textAlign: 'right' }}>ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {credentials.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ textAlign: 'center', padding: '20px', color: 'var(--fg-3)', fontSize: 10 }}>No credentials configured.</td>
+              </tr>
+            ) : credentials.map((credential) => {
+              const protocol = String(credential?.protocol || 'wireguard').toLowerCase()
+              const provider = normalizeProvider(credential?.provider || 'Unknown')
+              const airVPNPortList = provider === 'airvpn' && Array.isArray(credential?.firewall_vpn_input_ports)
+                ? credential.firewall_vpn_input_ports : []
+              const hasForwarding = Boolean(credential?.port_forwarding) && (
+                isForwardingSupported(provider) || (provider === 'airvpn' && airVPNPortList.length > 0)
+              )
+              const credentialId = String(credential?.id || '').trim()
+              const lease = credentialId ? leasesByCredentialId.get(credentialId) : null
+              const inUse = Boolean(lease)
+              const containerLabel = String(lease?.container_id || '').trim()
+              const identifier = protocol === 'wireguard'
+                ? `Key ${mask(credential?.private_key || credential?.wireguard_private_key)}`
+                : `User ${mask(credential?.openvpn_user || credential?.username, 3, 2)}`
+
+              return (
+                <tr key={String(credential?.id || Math.random())}>
+                  <td>
+                    <div style={{ fontWeight: 600, color: 'var(--fg-0)', fontSize: 11 }}>{provider}</div>
+                    <div style={{ fontSize: 9, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 1 }}>
+                      {protocol}{credential?.regions?.length > 0 ? ` · ${credential.regions.join(', ')}` : ''}
+                    </div>
+                  </td>
+                  <td style={{ fontSize: 10 }}>{identifier}</td>
+                  <td>
+                    {inUse ? (
+                      <div>
+                        <span className="tag tag-green" style={{ fontSize: 9 }}>IN USE</span>
+                        {containerLabel && <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 2 }}>{containerLabel}</div>}
                       </div>
                     ) : (
-                      <div className="space-y-3">
-                        <SettingRow label="Proton Username" description="Stored in settings for automated refresh.">
-                          <Input value={draft.vpn_servers_proton_username} onChange={(e) => update('vpn_servers_proton_username', e.target.value)} className="max-w-md" />
-                        </SettingRow>
-                        <SettingRow label="Proton Password" description="Stored in settings for automated refresh.">
-                          <Input type="password" value={draft.vpn_servers_proton_password} onChange={(e) => update('vpn_servers_proton_password', e.target.value)} className="max-w-md" />
-                        </SettingRow>
-                        <SettingRow label="TOTP Code (Optional)" description="One-time code; if empty, TOTP secret can be used.">
-                          <Input value={draft.vpn_servers_proton_totp_code} onChange={(e) => update('vpn_servers_proton_totp_code', e.target.value)} className="max-w-xs" />
-                        </SettingRow>
-                        <SettingRow label="TOTP Secret (Optional)" description="Base32 secret for automatic token generation.">
-                          <Input type="password" value={draft.vpn_servers_proton_totp_secret} onChange={(e) => update('vpn_servers_proton_totp_secret', e.target.value)} className="max-w-md" />
-                        </SettingRow>
-                      </div>
+                      <span className="tag" style={{ fontSize: 9 }}>AVAILABLE</span>
                     )}
-                  </>
-                )}
-
-                <div className="flex items-center gap-3">
-                  <Button type="button" variant="outline" onClick={refreshServersNow} disabled={refreshingServers}>
-                    {refreshingServers ? 'Refreshing...' : 'Refresh VPN Server List Now'}
-                  </Button>
-                  {refreshStatus?.last_finished_at && (
-                    <span className="text-xs text-muted-foreground">
-                      Last run: {new Date(refreshStatus.last_finished_at).toLocaleString()}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <CardTitle>Credential Pool</CardTitle>
-              <CardDescription>
-                Credential changes are part of the VPN draft and are applied only when you save.
-              </CardDescription>
-            </div>
-            <Button type="button" onClick={() => setDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Credential
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="secondary">Total: {credentials.length}</Badge>
-            <Badge variant="secondary">Leased: {leaseSummary?.leased ?? 0}</Badge>
-            <Badge variant="secondary">Available: {leaseSummary?.available ?? 0}</Badge>
-          </div>
-
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Provider/Protocol</TableHead>
-                  <TableHead>Identifier</TableHead>
-                  <TableHead>Usage Status</TableHead>
-                  <TableHead>Port Forwarding</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {credentials.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">No credentials configured.</TableCell>
-                  </TableRow>
-                ) : (
-                  credentials.map((credential) => {
-                    const protocol = String(credential?.protocol || 'wireguard').toLowerCase()
-                    const provider = normalizeProvider(credential?.provider || 'Unknown')
-                    const hasForwarding = Boolean(credential?.port_forwarding) && isForwardingSupported(provider)
-                    const credentialId = String(credential?.id || '').trim()
-                    const lease = credentialId ? leasesByCredentialId.get(credentialId) : null
-                    const inUse = Boolean(lease)
-                    const containerLabel = String(lease?.container_id || '').trim()
-                    
-                    const identifier = protocol === 'wireguard'
-                      ? `Key ${mask(credential?.private_key || credential?.wireguard_private_key)}`
-                      : `User ${mask(credential?.openvpn_user || credential?.username, 3, 2)}`
-
-                    return (
-                      <TableRow key={String(credential?.id || Math.random())}>
-                        <TableCell>
-                          <div className="font-medium">{provider}</div>
-                          <div className="text-xs uppercase text-muted-foreground">
-                            {protocol}
-                            {credential?.regions && credential.regions.length > 0 && ` • ${credential.regions.join(', ')}`}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm">{identifier}</TableCell>
-                        <TableCell>
-                          {inUse ? (
-                            <div className="space-y-1">
-                              <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">In Use</Badge>
-                              <p className="text-xs text-muted-foreground">
-                                Node: {containerLabel || 'unknown'}
-                              </p>
+                  </td>
+                  <td>
+                    {hasForwarding
+                      ? <div>
+                          <span className="tag tag-cyan" style={{ fontSize: 9 }}>⚡ ENABLED</span>
+                          {airVPNPortList.length > 0 && (
+                            <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 2 }}>
+                              {airVPNPortList.join(', ')}
                             </div>
-                          ) : (
-                            <Badge variant="outline">Available</Badge>
                           )}
-                        </TableCell>
-                        <TableCell>
-                          {hasForwarding ? (
-                            <Badge variant="success"><Zap className="mr-1 h-3.5 w-3.5" />Enabled</Badge>
-                          ) : (
-                            <Badge variant="secondary"><ZapOff className="mr-1 h-3.5 w-3.5" />Disabled</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button type="button" variant="ghost" size="icon" onClick={() => removeCredential(credential?.id)}>
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+                        </div>
+                      : <span className="tag" style={{ fontSize: 9 }}>DISABLED</span>
+                    }
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Open dialog pre-filled for editing
+                        const cred = credential || {}
+                        setEditingCredentialId(String(cred.id || ''))
+                        setCredentialProvider(normalizeProvider(cred.provider || 'protonvpn'))
+                        setCredentialMode(String((cred.protocol || 'wireguard')).toLowerCase())
+                        setCredentialRegions(Array.isArray(cred.regions) ? cred.regions.join(', ') : (cred.regions || ''))
+                        setCredentialPortForwarding(Boolean(cred.port_forwarding))
+                        setCredentialAirVPNPorts(Array.isArray(cred.firewall_vpn_input_ports) ? cred.firewall_vpn_input_ports.join(',') : (cred.firewall_vpn_input_ports || ''))
+                        if ((cred.protocol || 'wireguard').toLowerCase() === 'openvpn') {
+                          setOpenvpnUser(cred.openvpn_user || cred.username || '')
+                          setOpenvpnPassword(cred.openvpn_password || cred.password || '')
+                          setWgText('')
+                        } else {
+                          // For wireguard, pre-fill with stored conf if available
+                          setWgText(cred.conf_text || cred.file_content || '')
+                          setOpenvpnUser('')
+                          setOpenvpnPassword('')
+                        }
+                        setDialogOpen(true)
+                      }}
+                      className="tag tag-yellow"
+                      style={{ cursor: 'pointer', padding: '2px 8px', fontSize: 9, marginRight: 6 }}
+                    >
+                      ✎ EDIT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeCredential(credential?.id)}
+                      className="tag tag-red"
+                      style={{ cursor: 'pointer', padding: '2px 8px', fontSize: 9 }}
+                    >
+                      ✕ REMOVE
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </Pane>
 
-      <Sheet open={dialogOpen} onOpenChange={setDialogOpen}>
-        <SheetContent side="right" className="dark text-foreground w-[400px] sm:w-[540px] overflow-y-auto">
-          <SheetHeader className="mb-6">
-            <SheetTitle>Add VPN Credential</SheetTitle>
-            <SheetDescription>
-              Credential changes stay local until you save settings.
-            </SheetDescription>
-          </SheetHeader>
+      {/* Add Credential overlay */}
+      {dialogOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end',
+        }}>
+          <div style={{
+            width: 480, height: '100vh', overflowY: 'auto',
+            background: 'var(--bg-1)', borderLeft: '1px solid var(--line)',
+            display: 'flex', flexDirection: 'column',
+          }}>
+                <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div className="label">{editingCredentialId ? 'EDIT VPN CREDENTIAL' : 'ADD VPN CREDENTIAL'}</div>
+                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>{editingCredentialId ? 'Edit credential details and save settings to apply changes.' : 'Credential changes stay local until you save settings.'}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDialogOpen(false)}
+                style={{ background: 'none', border: '1px solid var(--line)', color: 'var(--fg-2)', padding: '3px 8px', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
 
-          <div className="space-y-6">
-            <SettingRow label="Provider" description="VPN service provider.">
-              <Select value={credentialProvider} onValueChange={setCredentialProvider}>
-                <SelectTrigger className="w-full text-foreground"><SelectValue placeholder="Select provider" /></SelectTrigger>
-                <SelectContent className="dark">
-                  {PROVIDER_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </SettingRow>
-
-            <SettingRow label="Protocol" description="Protocol type for this credential.">
-              <Select value={credentialMode} onValueChange={setCredentialMode}>
-                <SelectTrigger className="w-full text-foreground"><SelectValue placeholder="Select protocol" /></SelectTrigger>
-                <SelectContent className="dark">
-                  <SelectItem value="wireguard">Wireguard (.conf text)</SelectItem>
-                  <SelectItem value="openvpn">OpenVPN (username/password)</SelectItem>
-                </SelectContent>
-              </Select>
-            </SettingRow>
-
-            <SettingRow label="Preferred Regions" description="Comma-separated preferred regions (e.g. us-east, nl).">
-              <Input value={credentialRegions} onChange={(e) => setCredentialRegions(e.target.value)} placeholder="us-east, nl, region:paris" className="w-full" />
-            </SettingRow>
-
-            <SettingRow label="Port Forwarding" description="Enable only if credential/provider supports forwarded ports.">
-              <Switch checked={credentialPortForwarding && sheetProviderSupportsForwarding} disabled={!sheetProviderSupportsForwarding} onCheckedChange={setCredentialPortForwarding} />
-            </SettingRow>
-
-            {credentialMode === 'wireguard' ? (
-              <div className="space-y-4">
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${
-                    isDragging ? 'border-primary bg-primary/10' : 'border-muted-foreground/25 hover:border-primary/50'
-                  }`}
+            <div style={{ padding: '14px 16px', flex: 1 }}>
+              <SettingRow label="Provider" description="VPN service provider.">
+                <select value={credentialProvider} onChange={(e) => setCredentialProvider(e.target.value)} style={selectStyle}>
+                  {PROVIDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </SettingRow>
+              <SettingRow label="Protocol" description="Protocol type for this credential.">
+                <select value={credentialMode} onChange={(e) => setCredentialMode(e.target.value)} style={selectStyle}>
+                  <option value="wireguard">Wireguard (.conf text)</option>
+                  <option value="openvpn">OpenVPN (username/password)</option>
+                </select>
+              </SettingRow>
+              <SettingRow label="Preferred Regions" description="Comma-separated preferred regions (e.g. us-east, nl).">
+                <input value={credentialRegions} onChange={(e) => setCredentialRegions(e.target.value)} placeholder="us-east, nl, region:paris" style={{ ...inputStyle, width: '100%' }}/>
+              </SettingRow>
+              {sheetProviderNormalized === 'airvpn' && (
+                <SettingRow
+                  label="Pre-allocated Ports"
+                  description="Comma-separated ports from airvpn.org/ports. Each container claims one from the shared pool."
                 >
-                  <UploadCloud className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
-                  <p className="text-sm font-medium">Drag & drop your .conf file here</p>
-                  <p className="text-xs text-muted-foreground mt-1">or paste the content below</p>
-                </div>
-                
-                <SettingRow label="Wireguard .conf Content" description="Paste full [Interface]/[Peer] configuration.">
-                  <Textarea value={wgText} onChange={(e) => setWgText(e.target.value)} rows={10} placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;Endpoint = ..." />
+                  <input
+                    value={credentialAirVPNPorts}
+                    onChange={(e) => setCredentialAirVPNPorts(e.target.value)}
+                    placeholder="e.g. 12345, 54321"
+                    style={{ ...inputStyle, width: '100%' }}
+                  />
                 </SettingRow>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <SettingRow label="OpenVPN Username" description="Credential username.">
-                  <Input value={openvpnUser} onChange={(e) => setOpenvpnUser(e.target.value)} className="w-full" />
-                </SettingRow>
-                <SettingRow label="OpenVPN Password" description="Credential password.">
-                  <Input type="password" value={openvpnPassword} onChange={(e) => setOpenvpnPassword(e.target.value)} className="w-full" />
-                </SettingRow>
-              </div>
-            )}
-          </div>
+              )}
+              <SettingRow
+                label="Port Forwarding"
+                description={
+                  sheetProviderNormalized === 'airvpn'
+                    ? 'Enable to assign a pre-allocated port from the pool to each container.'
+                    : 'Enable only if credential/provider supports forwarded ports.'
+                }
+              >
+                <Toggle checked={credentialPortForwarding && sheetProviderSupportsForwarding} disabled={!sheetProviderSupportsForwarding} onChange={setCredentialPortForwarding}/>
+              </SettingRow>
 
-          <SheetFooter className="mt-8">
-            <Button type="button" variant="outline" className="text-foreground" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={addCredential} disabled={dialogLoading}>
-              {dialogLoading ? <><AlertCircle className="mr-2 h-4 w-4" />Saving...</> : <><Plus className="mr-2 h-4 w-4" />Add Credential</>}
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+              {credentialMode === 'wireguard' ? (
+                <div style={{ marginTop: 16 }}>
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    style={{
+                      border: `2px dashed ${isDragging ? 'var(--acc-green)' : 'var(--line)'}`,
+                      background: isDragging ? 'var(--acc-green-bg)' : 'var(--bg-0)',
+                      padding: '24px 16px',
+                      textAlign: 'center',
+                      cursor: 'pointer',
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div style={{ fontSize: 11, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)' }}>↑ Drag &amp; drop your .conf file here</div>
+                    <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 4 }}>or paste the content below</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--fg-2)', marginBottom: 4, fontFamily: 'var(--font-mono)' }}>Wireguard .conf Content</div>
+                  <textarea
+                    value={wgText}
+                    onChange={(e) => setWgText(e.target.value)}
+                    rows={10}
+                    placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;Endpoint = ..."
+                    style={textareaStyle}
+                  />
+                </div>
+              ) : (
+                <div style={{ marginTop: 16 }}>
+                  <SettingRow label="OpenVPN Username" description="Credential username.">
+                    <input value={openvpnUser} onChange={(e) => setOpenvpnUser(e.target.value)} style={{ ...inputStyle, width: '100%' }}/>
+                  </SettingRow>
+                  <SettingRow label="OpenVPN Password" description="Credential password.">
+                    <input type="password" value={openvpnPassword} onChange={(e) => setOpenvpnPassword(e.target.value)} style={{ ...inputStyle, width: '100%' }}/>
+                  </SettingRow>
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--line)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setDialogOpen(false)}
+                style={{ background: 'none', border: '1px solid var(--line)', color: 'var(--fg-1)', padding: '6px 16px', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addCredential}
+                disabled={dialogLoading}
+                className="tag tag-green"
+                style={{ cursor: dialogLoading ? 'not-allowed' : 'pointer', padding: '6px 16px', opacity: dialogLoading ? 0.6 : 1 }}
+              >
+                {dialogLoading ? '⟳ SAVING...' : (editingCredentialId ? '✓ SAVE CHANGES' : '+ ADD CREDENTIAL')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

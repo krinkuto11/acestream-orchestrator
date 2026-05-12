@@ -103,18 +103,16 @@ This removes relay-port churn and improves monitored stream HA behavior.
 
 ## State Management
 
-Runtime state is centralized in `state.py` for fast reads and coordinated writes across controllers.
+Runtime state is split across two tiers: an in-memory `Store` (`internal/state/store.go`) protected by a `sync.RWMutex` for low-latency reads, and Redis used as an event bus and cross-plane visibility layer (`internal/state/redis.go`).
 
 ### Current Characteristics
 
-- Uses an `RLock` to synchronize in-memory mutations only.
-- Maintains engine, stream, VPN-node, monitor-session, and scaling-intent snapshots for low-latency reads.
-- Persists canonical records to SQLite through an asynchronous write-behind queue.
-- Runs a dedicated background DB worker thread that drains queued persistence tasks and commits outside the request/proxy critical path.
-- Captures immutable payloads for queued DB tasks to avoid races with live in-memory objects.
-- Shuts down persistence gracefully using a stop signal and poison-pill task during cleanup.
+- A single `Store` struct holds engine, VPN-node, stream, and scaling-intent snapshots; all exported methods are goroutine-safe via `sync.RWMutex`.
+- Redis pub/sub propagates control-plane changes to the proxy plane without polling; a `RedisPublisher` writes engine snapshots and fires `cp:state_changed` events.
+- Settings and metrics are persisted to SQLite (`orchestrator.db`) via the `persistence` package; writes happen outside the hot path and do not block state reads.
+- Graceful shutdown drains any pending persistence work before exit.
 
-This design decouples disk latency from state reads/writes in the hot path and reduces lock contention under high stream churn.
+This design decouples disk latency from in-memory state operations and eliminates lock contention under high stream churn.
 
 ## Operational Flow
 

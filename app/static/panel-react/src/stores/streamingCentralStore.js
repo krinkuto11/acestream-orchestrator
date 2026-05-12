@@ -11,12 +11,7 @@ const parseBufferPieces = (stream) => {
   return proxyPieces
 }
 
-const buildHeaders = (apiKey) => {
-  if (!apiKey) return {}
-  return {
-    Authorization: `Bearer ${apiKey}`,
-  }
-}
+const buildHeaders = () => ({})
 
 const toFallbackEgressGbps = (streams) => {
   const egressMbps = (streams || []).reduce((sum, stream) => {
@@ -153,7 +148,7 @@ export const useStreamingCentralStore = create((set, get) => ({
     })
   },
 
-  refreshBackendTelemetry: async ({ orchUrl, apiKey }) => {
+  refreshBackendTelemetry: async ({ orchUrl }) => {
     if (!orchUrl) return
 
     const nowMs = Date.now()
@@ -168,7 +163,7 @@ export const useStreamingCentralStore = create((set, get) => ({
 
     set({ isBackendRefreshing: true })
 
-    const headers = buildHeaders(apiKey)
+    const headers = buildHeaders()
 
     let engineInspectById = get().engineInspectById || {}
 
@@ -264,7 +259,7 @@ export const useStreamingCentralStore = create((set, get) => ({
     }))
   },
 
-  fetchContainerLogs: async ({ orchUrl, apiKey, containerId }) => {
+  fetchContainerLogs: async ({ orchUrl, containerId }) => {
     if (!orchUrl || !containerId) return
 
     set((state) => ({
@@ -282,7 +277,7 @@ export const useStreamingCentralStore = create((set, get) => ({
       const response = await fetch(
         `${orchUrl}/api/v1/containers/${encodeURIComponent(containerId)}/logs?tail=300&since_seconds=1200`,
         {
-          headers: buildHeaders(apiKey),
+          headers: buildHeaders(),
         },
       )
 

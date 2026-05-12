@@ -152,7 +152,7 @@ When streams end, the orchestrator manages cache to optimize resource usage.
 - Updates engine state with `last_cache_cleanup` timestamp
 - Stores cache metrics for monitoring
 
-**Location**: `app/services/state.py` - `on_stream_ended()` method
+**Location**: `internal/state/store.go` - stream-ended handler
 
 ### Periodic Cache Cleanup
 

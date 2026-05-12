@@ -8,8 +8,6 @@ import { Activity } from 'lucide-react'
 function Header({
   orchUrl,
   setOrchUrl,
-  apiKey,
-  setApiKey,
   refreshInterval,
   setRefreshInterval,
   isConnected
@@ -37,18 +35,6 @@ function Header({
             />
           </div>
           
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="api-key" className="text-xs">API Key</Label>
-            <Input
-              id="api-key"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              className="h-8 w-40"
-              placeholder="Enter API key"
-            />
-          </div>
-
           <div className="flex flex-col gap-1">
             <Label htmlFor="refresh" className="text-xs">Refresh</Label>
             <Select value={refreshInterval.toString()} onValueChange={(val) => setRefreshInterval(Number(val))}>

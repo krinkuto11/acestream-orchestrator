@@ -94,7 +94,6 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, vpnMode = null
   const healthVariant = healthColors[healthStatus] || 'outline'
   const lifecycle = resolveEngineLifecycle(engine, drainingVpnContainers)
   const isDraining = lifecycle === 'draining'
-
   // Stats are delivered by the global SSE snapshot payload.
   useEffect(() => {
     setStats(engine?.docker_stats || null)
@@ -123,9 +122,11 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, vpnMode = null
           </Button>
         </TableCell>
         <TableCell className="font-medium text-center">
-          <span className="text-sm text-white truncate max-w-[12rem] block" title={engine.container_name || engine.container_id}>
-            {engine.container_name || engine.container_id.slice(0, 12)}
-          </span>
+          <div className="flex items-center justify-center gap-1">
+            <span className="text-sm text-white truncate max-w-[10rem] block" title={engine.container_name || engine.container_id}>
+              {engine.container_name || engine.container_id.slice(0, 12)}
+            </span>
+          </div>
         </TableCell>
         <TableCell className="text-center">
           <span className="text-sm text-white">{engine.host}:{engine.port}</span>

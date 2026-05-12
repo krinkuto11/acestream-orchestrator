@@ -38,6 +38,7 @@ export interface TopologySummary {
   activeClients: number
   failoverEngines: number
   vpnDown: string[]
+  vpnHealthy: string[]
 }
 
 export interface TopologyInputSnapshot {
@@ -66,6 +67,7 @@ const BASE_SUMMARY: TopologySummary = {
   activeClients: 0,
   failoverEngines: 0,
   vpnDown: [],
+  vpnHealthy: [],
 }
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -263,18 +265,19 @@ const extractVpnNodes = (
   }
 
   const upsert = (rawNode: Record<string, unknown>, indexHint: number) => {
-    const name = String(rawNode.container_name || rawNode.container || rawNode.name || rawNode.id || '').trim()
-    if (!name || seen.has(name)) return
+    const rawName = String(rawNode.container_name || rawNode.container || rawNode.name || rawNode.id || '').trim()
+    if (!rawName || seen.has(rawName)) return
 
-    seen.add(name)
+    seen.add(rawName)
+    const name = rawName.replace(/^dyn-/, '').replace(/^gluetun-/, '')
     const connected = isTruthyConnection(rawNode.connected ?? rawNode.healthy ?? rawNode.condition ?? rawNode.status)
     const provider = rawNode.provider == null ? null : String(rawNode.provider)
     const country = rawNode.country == null ? null : String(rawNode.country)
 
     nodes.push({
-      id: name,
-      title: `VPN ${indexHint + 1}`,
-      subtitle: name,
+      id: rawName,
+      title: name.charAt(0).toUpperCase() + name.slice(1),
+      subtitle: rawName,
       connected,
       lifecycle: normalizeLifecycle(rawNode.lifecycle),
       publicIp: rawNode.public_ip == null ? null : String(rawNode.public_ip),
@@ -502,6 +505,7 @@ const buildSnapshot = (
 
     return {
       engine,
+      engineStreams,
       streamCount: engineStreams.length,
       measuredMbps: measuredDownMbps, // used for sorting
       streamMeasuredDownMbps: toMbps(streamMeasuredDownKbps),
@@ -547,14 +551,14 @@ const buildSnapshot = (
   })
 
   const NUM_COLUMNS = isVpnClusterMode
-    ? Math.max(1, Math.min(2, Math.ceil(engineStats.length / 8)))
-    : Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
-  const COLUMN_SPACING_X = 340
-  const STAGGERED_ROW_SPACING_Y = 140
-  const CLUSTER_GAP_Y = 220
+    ? Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
+    : Math.max(1, Math.min(4, Math.ceil(engineStats.length / 5)))
+  const COLUMN_SPACING_X = 280
+  const STAGGERED_ROW_SPACING_Y = 120
+  const CLUSTER_GAP_Y = 180
 
-  const engineStartX = 350
-  const engineStartY = 80
+  const engineStartX = 280
+  const engineStartY = 60
 
   const enginesPerTunnel = normalizedEngineStats.reduce(
     (acc, item) => {
@@ -669,17 +673,7 @@ const buildSnapshot = (
   }
 
   // 3. Process engine nodes with stable staggered lanes
-  normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, measuredDownKbps, measuredUpKbps, assignedTunnel }, index) => {
-    const engineStreams = resolveStreamsForEngine(engine)
-    const monitorStreamCount = Math.max(
-      0,
-      Number(
-        engine.monitor_stream_count ??
-          ((engine.stream_count ?? engineStreams.length) - engineStreams.length),
-      ),
-    )
-    const hasMonitoringSession = monitorStreamCount > 0
-
+  normalizedEngineStats.forEach(({ engine, engineStreams, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, measuredDownKbps, measuredUpKbps, assignedTunnel }, index) => {
     const localIndex = tunnelLocalIndex[assignedTunnel] || 0
     tunnelLocalIndex[assignedTunnel] = localIndex + 1
 
@@ -706,13 +700,9 @@ const buildSnapshot = (
     )
 
     // VPN → Engine: P2P download speed.
-    // Keep the route visibly active during monitor-only sessions even if Ace reports 0 throughput.
-    const monitoringFloorMbps = hasMonitoringSession && measuredDownMbps <= 0
-      ? Math.max(0.3, monitorStreamCount * 0.3)
-      : 0
     const bandwidthMbps = measuredDownMbps > 0
       ? measuredDownMbps
-      : (monitoringFloorMbps > 0 ? monitoringFloorMbps : (isMockMode ? randomBetween(8, 72) : 0))
+      : (isMockMode ? randomBetween(8, 72) : 0)
     
     // Engine → Proxy: actual per-engine ingress from proxy metrics when available.
     // If the per-engine ingress map exists, treat missing/zero as zero (authoritative)
@@ -768,7 +758,6 @@ const buildSnapshot = (
           activeTunnel: sourceNodeId,
           peers: engineStreams.reduce((sum, stream) => sum + (stream.peers || 0), 0),
           targetBitrate: engineStreams[0]?.bitrate || null,
-          monitorStreamCount,
           lifecycle: engineLifecycle,
           variant: engine.engine_variant || 'default',
           forwarded: engine.forwarded,
@@ -797,12 +786,11 @@ const buildSnapshot = (
         bandwidthMbps: bandwidthMbps,
         uploadMbps: edgeUploadBw,
         labelPosition: 'near-target',
-        monitoringActive: hasMonitoringSession,
         drainingRoute: edgeIsDraining,
         flowActive: vpnEngineFlowActive,
       },
       style: {
-        stroke: (failoverActive || hasMonitoringSession || edgeIsDraining) ? '#f59e0b' : '#64748b',
+        stroke: (failoverActive || edgeIsDraining) ? '#f59e0b' : '#64748b',
         strokeWidth: clamp(1.6 + bandwidthMbps / 55, 1.6, 5.8),
         strokeDasharray: (failoverActive || edgeIsDraining) ? '8 5' : undefined,
       },
@@ -897,16 +885,16 @@ const buildSnapshot = (
   const clientStartY = centerY - clientTotalHeight / 2
 
   clientList.forEach((client: any, index: number) => {
-    const cNodeId = `client-${client.id}`
+    const cNodeId = `client-${client.client_id}`
     // Stagger nodes slightly for visual depth and to make them feel "alive"
     const nodeX = clientStartX + (index % 2 === 0 ? 0 : 45)
     const nodeY = clientStartY + (index * clientSpacingY)
     const rawClientBw = (client.bps * 8) / 1_000_000
     const isPrebuffering = Boolean(client.is_prebuffering)
-    
+
     // Retrieve previous client node state
     const prevClientNode = prevState?.nodes.find(n => n.id === cNodeId)
-    
+
     // Treat zero-bitrate clients as inactive to avoid lingering proxy->client pipes.
     const clientIsActive = rawClientBw > 0.05
     const clientBwMbps = smoothBandwidth(rawClientBw, prevClientNode?.data?.bandwidthMbps, clientIsActive)
@@ -917,15 +905,15 @@ const buildSnapshot = (
       position: { x: nodeX, y: nodeY },
       data: {
         kind: 'client',
-        title: client.ip || 'Unknown IP',
-        subtitle: client.ua || 'Generic Player',
+        title: client.ip_address || 'Unknown IP',
+        subtitle: client.user_agent || 'Generic Player',
         health: 'healthy',
         streamCount: 1,
         bandwidthMbps: clientBwMbps,
         metadata: {
-          type: client.type,
+          type: client.protocol,
           totalBytes: client.bytes_sent || 0,
-          connectedAt: new Date(client.connected_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          connectedAt: new Date(client.connected_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         },
       },
     })
@@ -944,7 +932,7 @@ const buildSnapshot = (
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: clientBwMbps,
-        protocol: client.type,
+        protocol: client.protocol,
         flowActive: clientFlowActive,
         isPrebuffering: isPrebuffering,
       },
@@ -979,6 +967,10 @@ const buildSnapshot = (
     edge.zIndex = bw > 0.1 ? 50 : 5
   })
 
+  const vpnHealthy = vpnNodes
+    .filter(n => n.connected)
+    .map(n => n.id)
+
   const summary: TopologySummary = {
     totalBandwidthMbps,
     activeEngines: workingEngines.length,
@@ -986,6 +978,7 @@ const buildSnapshot = (
     activeClients,
     failoverEngines: failoverEngines.length,
     vpnDown,
+    vpnHealthy,
   }
 
   return {

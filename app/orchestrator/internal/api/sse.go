@@ -1,0 +1,721 @@
+package api
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/acestream/acestream/internal/config"
+	cpdocker "github.com/acestream/acestream/internal/controlplane/docker"
+	"github.com/acestream/acestream/internal/proxy/telemetry"
+	"github.com/acestream/acestream/internal/state"
+)
+
+// sseBroker fans out state-change notifications to connected SSE clients.
+type sseBroker struct {
+	mu      sync.Mutex
+	clients map[chan []byte]struct{}
+}
+
+var globalBroker = &sseBroker{
+	clients: make(map[chan []byte]struct{}),
+}
+
+var metricsBroker = &sseBroker{
+	clients: make(map[chan []byte]struct{}),
+}
+
+func (b *sseBroker) subscribe() chan []byte {
+	ch := make(chan []byte, 4)
+	b.mu.Lock()
+	b.clients[ch] = struct{}{}
+	b.mu.Unlock()
+	return ch
+}
+
+func (b *sseBroker) unsubscribe(ch chan []byte) {
+	b.mu.Lock()
+	delete(b.clients, ch)
+	b.mu.Unlock()
+}
+
+func (b *sseBroker) publish(msg []byte) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for ch := range b.clients {
+		select {
+		case ch <- msg:
+		default:
+			// drop if client is slow
+		}
+	}
+}
+
+// NotifyStateChange serialises the current state and fans it out to SSE clients.
+// Called by the bridge/monitor whenever state changes.
+func NotifyStateChange(st stateSnapshot) {
+	payload, err := buildSSEPayload(st)
+	if err != nil {
+		return
+	}
+	msg := formatSSE("full_sync", payload)
+	globalBroker.publish([]byte(msg))
+}
+
+// stateSnapshot is a subset of the store interface needed to build SSE payloads.
+type stateSnapshot interface {
+	ListEngines() interface{}
+	ListStreams() interface{}
+	ListVPNNodes() interface{}
+}
+
+func buildSSEPayload(st stateSnapshot) (map[string]any, error) {
+	return map[string]any{
+		"engines":   st.ListEngines(),
+		"streams":   st.ListStreams(),
+		"vpn_nodes": st.ListVPNNodes(),
+		"timestamp": time.Now().UTC(),
+	}, nil
+}
+
+func formatSSE(event string, data any) string {
+	b, _ := json.Marshal(data)
+	return fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(b))
+}
+
+// ─── SSE route registration ───────────────────────────────────────────────────
+
+// vpnBroker fans out vpn.* events to subscribers of /api/v1/vpn/reputation/stream.
+var vpnBroker = &sseBroker{
+	clients: make(map[chan []byte]struct{}),
+}
+
+// PublishVPNEvent publishes a named vpn.* SSE event to all reputation stream subscribers.
+func PublishVPNEvent(eventType string, data any) {
+	msg := []byte(formatSSE(eventType, data))
+	vpnBroker.publish(msg)
+	// Also publish onto the global broker so full_sync subscribers can observe.
+	globalBroker.publish(msg)
+}
+
+func (s *ProxyServer) registerSSERoutes() {
+	s.mux.HandleFunc("GET /api/v1/events/stream", s.handleSSEEventsStream)
+	s.mux.HandleFunc("GET /api/v1/events/live", s.handleSSEEventsLive)
+	s.mux.HandleFunc("GET /api/v1/metrics/stream", s.handleSSEMetricsStream)
+	s.mux.HandleFunc("GET /api/v1/containers/{id}/logs/stream", s.handleSSEContainerLogs)
+	s.mux.HandleFunc("GET /api/v1/vpn/leases/stream", s.handleSSEVPNLeases)
+	s.mux.HandleFunc("GET /api/v1/streams/{id}/details/stream", s.handleSSEStreamDetails)
+	s.mux.HandleFunc("GET /api/v1/custom-variant/reprovision/status/stream", s.handleSSEReprovisionStatus)
+	s.mux.HandleFunc("GET /api/v1/settings/engine/reprovision/status/stream", s.handleSSEReprovisionStatus)
+	s.mux.HandleFunc("GET /api/v1/vpn/reputation/stream", s.handleSSEVPNReputation)
+}
+
+// handleSSEVPNReputation streams vpn.* events to the frontend reputation table.
+func (s *ProxyServer) handleSSEVPNReputation(w http.ResponseWriter, r *http.Request) {
+	if !s.sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	sseHeaders(w)
+
+	ch := vpnBroker.subscribe()
+	defer vpnBroker.unsubscribe(ch)
+
+	ka := time.NewTicker(15 * time.Second)
+	defer ka.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, err := w.Write(msg); err != nil {
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		case <-ka.C:
+			if !writeSSEKeepAlive(w) {
+				return
+			}
+		}
+	}
+}
+
+// ─── SSE helpers ─────────────────────────────────────────────────────────────
+
+func sseHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+}
+
+func (s *ProxyServer) sseAPIKeyOK(r *http.Request) bool {
+	key := config.C.Load().APIKey
+	if key == "" {
+		return true
+	}
+	// Panel session cookie set when the browser loads /panel/.
+	if cookie, err := r.Cookie("ace_panel_session"); err == nil {
+		if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(s.panelToken)) == 1 {
+			return true
+		}
+	}
+	kb := []byte(key)
+	match := func(provided string) bool {
+		return provided != "" && subtle.ConstantTimeCompare([]byte(provided), kb) == 1
+	}
+	if match(r.URL.Query().Get("api_key")) || match(r.URL.Query().Get("key")) {
+		return true
+	}
+	if match(r.Header.Get("X-API-Key")) {
+		return true
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return match(strings.TrimPrefix(auth, "Bearer "))
+	}
+	return false
+}
+
+// writeSSEEvent writes a single SSE event; returns false if the client is gone.
+func writeSSEEvent(w http.ResponseWriter, event string, data any) bool {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return false
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(b))
+	if err != nil {
+		return false
+	}
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return true
+}
+
+func writeSSEKeepAlive(w http.ResponseWriter) bool {
+	_, err := fmt.Fprint(w, ": keep-alive\n\n")
+	if err != nil {
+		return false
+	}
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return true
+}
+
+// ─── /api/v1/events/stream  &  /api/v1/events/live ───────────────────────────
+
+func (s *ProxyServer) handleSSEEventsStream(w http.ResponseWriter, r *http.Request) {
+	if !s.sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sseHeaders(w)
+
+	// Send initial full sync.
+	initial := s.buildStatePayload()
+	if !writeSSEEvent(w, "full_sync", map[string]any{
+		"type":    "full_sync",
+		"payload": initial,
+		"meta":    map[string]any{"reason": "initial_sync"},
+	}) {
+		return
+	}
+
+	ch := globalBroker.subscribe()
+	defer globalBroker.unsubscribe(ch)
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, err := w.Write(msg); err != nil {
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		case <-ticker.C:
+			if !writeSSEKeepAlive(w) {
+				return
+			}
+		}
+	}
+}
+
+// ─── /api/v1/events/live ─────────────────────────────────────────────────────
+
+// handleSSEEventsLive serves the EventsPage which expects "events_snapshot"
+// events carrying a log of recent system events (not full state syncs).
+func (s *ProxyServer) handleSSEEventsLive(w http.ResponseWriter, r *http.Request) {
+	if !s.sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sseHeaders(w)
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			limit := 100
+			if raw := r.URL.Query().Get("limit"); raw != "" {
+				if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+					limit = parsed
+				}
+			}
+			filter := r.URL.Query().Get("event_type")
+			events, stats := state.GetEventsSnapshot(limit, filter)
+			snapshot := map[string]any{
+				"events":    events,
+				"stats":     stats,
+				"timestamp": time.Now().UTC(),
+			}
+			if !writeSSEEvent(w, "events_snapshot", map[string]any{"payload": snapshot}) {
+				return
+			}
+		case <-keepalive.C:
+			if !writeSSEKeepAlive(w) {
+				return
+			}
+		}
+	}
+}
+
+// ─── /api/v1/metrics/stream ───────────────────────────────────────────────────
+
+func (s *ProxyServer) handleSSEMetricsStream(w http.ResponseWriter, r *http.Request) {
+	if !s.sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sseHeaders(w)
+
+	// Send an immediate snapshot so the client doesn't wait up to 5 s for
+	// the first broker tick.
+	windowSeconds := 900
+	if raw := r.URL.Query().Get("window_seconds"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			windowSeconds = parsed
+		}
+	}
+	initial := buildDashboardSnapshot(s.st, windowSeconds)
+	if !writeSSEEvent(w, "metrics_snapshot", initial) {
+		return
+	}
+
+	ch := metricsBroker.subscribe()
+	defer metricsBroker.unsubscribe(ch)
+
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, err := w.Write(msg); err != nil {
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		case <-keepalive.C:
+			if !writeSSEKeepAlive(w) {
+				return
+			}
+		}
+	}
+}
+
+// ─── /api/v1/containers/{id}/logs/stream ────────────────────────────────────
+
+func (s *ProxyServer) handleSSEContainerLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	sseHeaders(w)
+
+	sendLogs := func() bool {
+		lines, err := cpdocker.GetContainerLogs(r.Context(), id, "100", false, 0)
+		if err != nil {
+			slog.Warn("SSE logs: get container logs failed", "id", id, "err", err)
+			return writeSSEEvent(w, "error", map[string]string{"error": err.Error()})
+		}
+		return writeSSEEvent(w, "container_logs_snapshot", map[string]any{
+			"container_id": id,
+			"logs":         strings.Join(lines, "\n"),
+			"fetched_at":   time.Now().UTC(),
+		})
+	}
+
+	sendLogs()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !sendLogs() {
+				return
+			}
+		case <-keepalive.C:
+			if !writeSSEKeepAlive(w) {
+				return
+			}
+		}
+	}
+}
+
+// ─── /api/v1/vpn/leases/stream ───────────────────────────────────────────────
+
+func (s *ProxyServer) handleSSEVPNLeases(w http.ResponseWriter, r *http.Request) {
+	if !s.sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sseHeaders(w)
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	sendLeases := func() bool {
+		nodes := s.st.ListVPNNodes()
+		return writeSSEEvent(w, "vpn_leases_snapshot", map[string]any{"vpn_nodes": nodes})
+	}
+
+	sendLeases()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !sendLeases() {
+				return
+			}
+		}
+	}
+}
+
+// ─── /api/v1/streams/{id}/details/stream ────────────────────────────────────
+
+func (s *ProxyServer) handleSSEStreamDetails(w http.ResponseWriter, r *http.Request) {
+	if !s.sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	sseHeaders(w)
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+
+	sendDetails := func() bool {
+		st, ok := s.st.GetStream(id)
+		if !ok {
+			writeSSEEvent(w, "stream_not_found", map[string]string{"stream_id": id})
+			return false
+		}
+		return writeSSEEvent(w, "stream_details", st)
+	}
+
+	sendDetails()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !sendDetails() {
+				return
+			}
+		case <-keepalive.C:
+			if !writeSSEKeepAlive(w) {
+				return
+			}
+		}
+	}
+}
+
+// ─── reprovision status stream ────────────────────────────────────────────────
+
+func (s *ProxyServer) handleSSEReprovisionStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.sseAPIKeyOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sseHeaders(w)
+
+	ticker := time.NewTicker(config.C.Load().SSEUpdateInterval)
+	defer ticker.Stop()
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !writeSSEEvent(w, "reprovision_status", reprovisionStatus) {
+				return
+			}
+		case <-keepalive.C:
+			if !writeSSEKeepAlive(w) {
+				return
+			}
+		}
+	}
+}
+
+// ─── State snapshot helpers ───────────────────────────────────────────────────
+
+func (s *ProxyServer) buildStatePayload() map[string]any {
+	cfg := config.C.Load()
+	engines := s.st.ListEnginesWithCounts()
+	streams := s.st.ListStreams()
+	vpns := s.st.ListVPNNodes()
+
+	var healthy, unhealthy, draining int
+	for _, e := range engines {
+		switch {
+		case e.Draining:
+			draining++
+		case e.HealthStatus == state.HealthHealthy:
+			healthy++
+		default:
+			unhealthy++
+		}
+	}
+
+	activeStreams := 0
+	for _, st := range streams {
+		if st.Status == "started" || st.Status == "playing" || st.Status == "prebuf" {
+			activeStreams++
+		}
+	}
+
+	var vpnHealthy int
+	for _, n := range vpns {
+		if n.Healthy {
+			vpnHealthy++
+		}
+	}
+
+	// Circuit-breaker state for provisioning section.
+	cbState := "closed"
+	var lastFailure any
+	if s.cb != nil {
+		cbStatus := s.cb.GetStatus()
+		if gen, ok := cbStatus["general"].(map[string]any); ok {
+			if st, ok := gen["state"].(string); ok && st != "" {
+				cbState = st
+			}
+			lastFailure = gen["last_failure_time"]
+		}
+	}
+	canProvision := cbState == "closed"
+
+	streamCounts := s.st.GetStreamCounts()
+	usedCapacity := 0
+	for _, e := range engines {
+		if streamCounts[e.ContainerID] > 0 {
+			usedCapacity++
+		}
+	}
+	totalCapacity := len(engines)
+	availableCapacity := totalCapacity - usedCapacity
+	if availableCapacity < 0 {
+		availableCapacity = 0
+	}
+
+	var overallStatus string
+	switch {
+	case len(engines) == 0:
+		overallStatus = "unavailable"
+	case !canProvision:
+		overallStatus = "degraded"
+	default:
+		overallStatus = "healthy"
+	}
+
+	var allClients []map[string]any
+	totalClients := 0
+	for _, st := range streams {
+		if st.Status == "started" || st.Status == "playing" || st.Status == "prebuf" {
+			totalClients += st.ActiveClients
+			for _, c := range st.Clients {
+				cc := make(map[string]any)
+				for k, v := range c {
+					cc[k] = v
+				}
+				cc["stream_id"] = st.ID
+				cc["content_id"] = st.ContentID
+				allClients = append(allClients, cc)
+			}
+		}
+	}
+
+	orchestratorStatus := map[string]any{
+		"status": overallStatus,
+		"engines": map[string]any{
+			"total":     len(engines),
+			"healthy":   healthy,
+			"unhealthy": unhealthy,
+			"draining":  draining,
+		},
+		"streams": map[string]any{
+			"active": activeStreams,
+			"total":  len(streams),
+		},
+		"capacity": map[string]any{
+			"total":        totalCapacity,
+			"used":         usedCapacity,
+			"available":    availableCapacity,
+			"max_replicas": cfg.MaxReplicas,
+			"min_replicas": cfg.MinReplicas,
+		},
+		"vpn": map[string]any{
+			"enabled":     cfg.VPNEnabled,
+			"nodes_total": len(vpns),
+			"healthy":     vpnHealthy,
+		},
+		"provisioning": map[string]any{
+			"can_provision":         canProvision,
+			"circuit_breaker_state": cbState,
+			"last_failure":          lastFailure,
+		},
+		"proxy": map[string]any{
+			"active_clients": map[string]any{
+				"total": totalClients,
+				"list":  allClients,
+			},
+			"throughput": map[string]any{
+				"egress_mbps": telemetry.DefaultTelemetry.GetEgressMbps(),
+			},
+		},
+		"config": map[string]any{
+			"auto_delete":    cfg.AutoDelete,
+			"grace_period_s": cfg.GracePeriod.Seconds(),
+			"min_replicas":   cfg.MinReplicas,
+			"max_replicas":   cfg.MaxReplicas,
+		},
+		"timestamp": time.Now().UTC(),
+	}
+
+	return map[string]any{
+		"engines":             engines,
+		"streams":             streams,
+		"vpn_nodes":           vpns,
+		"engines_total":       len(engines),
+		"engines_healthy":     healthy,
+		"engines_unhealthy":   unhealthy,
+		"engines_draining":    draining,
+		"streams_active":      activeStreams,
+		"orchestrator_status": orchestratorStatus,
+		"health": map[string]any{
+			"status":            overallStatus,
+			"healthy_engines":   healthy,
+			"unhealthy_engines": unhealthy,
+		},
+		"timestamp": time.Now().UTC(),
+	}
+}
+
+// RunSSEPublisher polls for state changes and notifies the SSE broker.
+// Call this in a background goroutine.
+func (s *ProxyServer) RunSSEPublisher(ctx context.Context) {
+	ticker := time.NewTicker(config.C.Load().SSEUpdateInterval)
+	defer ticker.Stop()
+
+	var lastHash string
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			payload := s.buildStatePayload()
+			h := stateHash(payload)
+			if h != lastHash {
+				lastHash = h
+				msg := formatSSE("full_sync", map[string]any{
+					"type":    "full_sync",
+					"payload": payload,
+					"meta":    map[string]any{"reason": "state_change"},
+				})
+				globalBroker.publish([]byte(msg))
+			}
+		}
+	}
+}
+
+// RunMetricsPublisher builds a dashboard snapshot every 5 s and fans it out to
+// all /api/v1/metrics/stream subscribers. One computation is shared across all
+// connected clients instead of each client running its own ticker.
+func (s *ProxyServer) RunMetricsPublisher(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			snapshot := buildDashboardSnapshot(s.st, 900)
+			msg := formatSSE("metrics_snapshot", snapshot)
+			metricsBroker.publish([]byte(msg))
+		}
+	}
+}
+
+func stateHash(m map[string]any) string {
+	b, _ := json.Marshal(m)
+	h := fnv.New64a()
+	h.Write(b)
+	return strconv.FormatUint(h.Sum64(), 16)
+}

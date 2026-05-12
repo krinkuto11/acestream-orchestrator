@@ -1,0 +1,2759 @@
+package api
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/acestream/acestream/internal/config"
+	cpdocker "github.com/acestream/acestream/internal/controlplane/docker"
+	cpengine "github.com/acestream/acestream/internal/controlplane/engine"
+	"github.com/acestream/acestream/internal/proxy/telemetry"
+	"github.com/acestream/acestream/internal/state"
+)
+
+const maxJSONBodyBytes = 10 << 20 // 10 MiB
+
+func (s *ProxyServer) registerManagementRoutes() {
+	// ── Events (proxy-plane POST) ─────────────────────────────────────────────
+	s.mux.HandleFunc("POST /api/v1/events/stream_started", s.mgHandleEventStreamStarted)
+	s.mux.HandleFunc("POST /api/v1/events/stream_ended", s.mgHandleEventStreamEnded)
+
+	// ── Engines ───────────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/engines", s.mgHandleListEngines)
+	s.mux.HandleFunc("GET /api/v1/engines/with-metrics", s.mgHandleEnginesWithMetrics)
+	s.mux.HandleFunc("GET /api/v1/engines/stats/all", s.mgHandleAllEngineStats)
+	s.mux.HandleFunc("GET /api/v1/engines/stats/total", s.mgHandleEngineStatsTotal)
+	s.mux.HandleFunc("GET /api/v1/engines/stats/{id}", s.mgHandleEngineStatsSingle)
+	s.mux.HandleFunc("GET /api/v1/engines/{id}", s.mgHandleGetEngine)
+	s.mux.HandleFunc("DELETE /api/v1/engines/{id}", s.requireAPIKey(s.mgHandleDeleteEngine))
+
+	// ── Containers ────────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/containers/{id}", s.mgHandleContainerInspect)
+	s.mux.HandleFunc("DELETE /api/v1/containers/{id}", s.requireAPIKey(s.mgHandleDeleteContainer))
+	s.mux.HandleFunc("GET /api/v1/containers/{id}/logs", s.requireAPIKey(s.mgHandleContainerLogs))
+
+	// ── Streams ───────────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/streams", s.mgHandleListStreams)
+	s.mux.HandleFunc("DELETE /api/v1/streams/{id}", s.requireAPIKey(s.mgHandleDeleteStream))
+	s.mux.HandleFunc("POST /api/v1/streams/batch-stop", s.requireAPIKey(s.mgHandleBatchStopStreams))
+	s.mux.HandleFunc("GET /api/v1/streams/{id}/stats", s.mgHandleStreamStats)
+	s.mux.HandleFunc("GET /api/v1/streams/{id}/extended-stats", s.mgHandleStreamExtendedStats)
+	s.mux.HandleFunc("GET /api/v1/streams/{id}/livepos", s.mgHandleStreamLivepos)
+
+	// ── Provisioning ──────────────────────────────────────────────────────────
+	s.mux.HandleFunc("POST /api/v1/provision", s.requireAPIKey(s.mgHandleProvision))
+	s.mux.HandleFunc("POST /api/v1/provision/acestream", s.requireAPIKey(s.mgHandleProvisionAcestream))
+	s.mux.HandleFunc("POST /api/v1/scale/{demand}", s.requireAPIKey(s.mgHandleScale))
+	s.mux.HandleFunc("POST /api/v1/gc", s.requireAPIKey(s.mgHandleGC))
+	s.mux.HandleFunc("POST /api/v1/reconcile", s.requireAPIKey(s.mgHandleReconcile))
+	s.mux.HandleFunc("GET /api/v1/by-label", s.requireAPIKey(s.mgHandleByLabel))
+
+	// ── VPN nodes ─────────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/vpn-nodes", s.mgHandleListVPNNodes)
+	s.mux.HandleFunc("POST /api/v1/vpn-nodes/provision", s.requireAPIKey(s.mgHandleProvisionVPNNode))
+	s.mux.HandleFunc("POST /api/v1/vpn-nodes/{name}/drain", s.requireAPIKey(s.mgHandleDrainVPNNode))
+	s.mux.HandleFunc("DELETE /api/v1/vpn-nodes/{name}", s.requireAPIKey(s.mgHandleDestroyVPNNode))
+	s.mux.HandleFunc("GET /api/v1/vpn-credentials", s.mgHandleVPNCredentials)
+	s.mux.HandleFunc("POST /api/v1/vpn-servers/refresh", s.requireAPIKey(s.mgHandleVPNServersRefresh))
+	s.mux.HandleFunc("POST /api/v1/vpn/servers/refresh", s.requireAPIKey(s.mgHandleVPNServersRefresh))
+
+	// ── VPN settings & status ─────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/vpn/publicip", s.mgHandleVPNPublicIP)
+	s.mux.HandleFunc("GET /api/v1/vpn/status", s.mgHandleVPNStatus)
+	s.mux.HandleFunc("GET /api/v1/vpn/leases", s.mgHandleVPNCredentials)
+	s.mux.HandleFunc("GET /api/v1/vpn/config", s.requireAPIKey(s.mgHandleGetVPNConfig))
+	s.mux.HandleFunc("POST /api/v1/vpn/config", s.requireAPIKey(s.mgHandleSetSettingsCategory("vpn_settings")))
+	s.mux.HandleFunc("GET /api/v1/settings/vpn", s.requireAPIKey(s.mgHandleGetVPNConfig))
+	s.mux.HandleFunc("POST /api/v1/settings/vpn", s.requireAPIKey(s.mgHandleSetSettingsCategory("vpn_settings")))
+	s.mux.HandleFunc("POST /api/v1/vpn/parse-wireguard", s.requireAPIKey(s.mgHandleParseWireGuard))
+	s.mux.HandleFunc("POST /api/v1/vpn/proton/refresh", s.requireAPIKey(s.mgHandleProtonRefresh))
+	s.mux.HandleFunc("GET /api/v1/vpn/servers/refresh/status", s.mgHandleVPNServersRefreshStatus)
+
+	// ── VPN Reputation ────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/vpn/servers", s.mgHandleListVPNRepServers)
+	s.mux.HandleFunc("GET /api/v1/vpn/servers/{id}/detail", s.mgHandleGetVPNRepServer)
+	s.mux.HandleFunc("GET /api/v1/vpn/reputation/recent-probes", s.mgHandleVPNRecentProbes)
+	s.mux.HandleFunc("POST /api/v1/vpn/reputation/probe", s.requireAPIKey(s.mgHandleVPNManualProbe))
+	s.mux.HandleFunc("GET /api/v1/vpn/reputation/probe/{job_id}", s.mgHandleVPNProbeStatus)
+	s.mux.HandleFunc("POST /api/v1/vpn/servers/{id}/quarantine", s.requireAPIKey(s.mgHandleVPNQuarantine))
+	s.mux.HandleFunc("POST /api/v1/vpn/servers/{id}/pin", s.requireAPIKey(s.mgHandleVPNPin))
+	s.mux.HandleFunc("GET /api/v1/vpn/reputation/config", s.mgHandleGetRepConfig)
+	s.mux.HandleFunc("PATCH /api/v1/vpn/reputation/config", s.requireAPIKey(s.mgHandlePatchRepConfig))
+
+	// ── Settings ──────────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/settings", s.requireAPIKey(s.mgHandleGetAllSettings))
+	s.mux.HandleFunc("POST /api/v1/settings", s.requireAPIKey(s.mgHandleUpdateAllSettings))
+	s.mux.HandleFunc("GET /api/v1/settings/export", s.requireAPIKey(s.mgHandleExportSettings))
+	s.mux.HandleFunc("POST /api/v1/settings/import", s.requireAPIKey(s.mgHandleImportSettings))
+	s.mux.HandleFunc("GET /api/v1/settings/engine/config", s.mgHandleGetSettingsCategory("engine_config"))
+	s.mux.HandleFunc("POST /api/v1/settings/engine/config", s.requireAPIKey(s.mgHandleSetSettingsCategory("engine_config")))
+	s.mux.HandleFunc("GET /api/v1/settings/orchestrator", s.mgHandleGetSettingsCategory("orchestrator_settings"))
+	s.mux.HandleFunc("POST /api/v1/settings/orchestrator", s.requireAPIKey(s.mgHandleSetSettingsCategory("orchestrator_settings")))
+	s.mux.HandleFunc("GET /api/v1/settings/engine", s.mgHandleGetSettingsCategory("engine_settings"))
+	s.mux.HandleFunc("POST /api/v1/settings/engine", s.requireAPIKey(s.mgHandleSetSettingsCategory("engine_settings")))
+	s.mux.HandleFunc("GET /api/v1/engine/config", s.mgHandleGetSettingsCategory("engine_config"))
+	s.mux.HandleFunc("POST /api/v1/engine/config", s.requireAPIKey(s.mgHandleSetSettingsCategory("engine_config")))
+	s.mux.HandleFunc("GET /api/v1/custom-variant/config", s.mgHandleGetSettingsCategory("custom_variant_config"))
+	s.mux.HandleFunc("POST /api/v1/custom-variant/config", s.requireAPIKey(s.mgHandleSetSettingsCategory("custom_variant_config")))
+	s.mux.HandleFunc("GET /api/v1/proxy/config", s.mgHandleGetSettingsCategory("proxy_settings"))
+	s.mux.HandleFunc("POST /api/v1/proxy/config", s.requireAPIKey(s.mgHandleSetProxyConfig))
+	s.mux.HandleFunc("POST /api/v1/settings/vpn/credentials", s.requireAPIKey(s.mgHandleAddVPNCredential))
+	s.mux.HandleFunc("DELETE /api/v1/settings/vpn/credentials/{id}", s.requireAPIKey(s.mgHandleDeleteVPNCredential))
+
+	// ── Custom variant reprovision ─────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/custom-variant/reprovision/status", s.mgHandleReprovisionStatus)
+	s.mux.HandleFunc("POST /api/v1/custom-variant/reprovision", s.requireAPIKey(s.mgHandleReprovision))
+	s.mux.HandleFunc("GET /api/v1/settings/engine/reprovision/status", s.mgHandleReprovisionStatus)
+	s.mux.HandleFunc("POST /api/v1/settings/engine/reprovision", s.requireAPIKey(s.mgHandleReprovision))
+	s.mux.HandleFunc("GET /api/v1/custom-variant/platform", s.mgHandlePlatform)
+
+	// ── Observability ─────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/health/status", s.mgHandleHealthStatus)
+	s.mux.HandleFunc("POST /api/v1/health/circuit-breaker/reset", s.requireAPIKey(s.mgHandleCircuitBreakerReset))
+	s.mux.HandleFunc("GET /api/v1/orchestrator/status", s.mgHandleOrchestratorStatus)
+	s.mux.Handle("GET /api/v1/metrics", promhttp.Handler())
+	s.mux.HandleFunc("GET /api/v1/metrics/dashboard", s.mgHandleMetricsDashboard)
+	s.mux.HandleFunc("GET /api/v1/metrics/performance", s.mgHandleMetricsPerformance)
+	s.mux.HandleFunc("GET /api/v1/events", s.mgHandleEvents)
+	s.mux.HandleFunc("GET /api/v1/events/stats", s.mgHandleEventsStats)
+	s.mux.HandleFunc("POST /api/v1/events/cleanup", s.requireAPIKey(s.mgHandleEventsCleanup))
+	s.mux.HandleFunc("GET /api/v1/cache/stats", s.mgHandleCacheStats)
+	s.mux.HandleFunc("POST /api/v1/cache/clear", s.requireAPIKey(s.mgHandleCacheClear))
+	s.mux.HandleFunc("GET /api/v1/engine-cache/stats", s.mgHandleCacheStats)
+	s.mux.HandleFunc("POST /api/v1/engine-cache/purge", s.requireAPIKey(s.mgHandleCacheClear))
+
+	// ── Circuit breaker ───────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/circuit-breaker", s.mgHandleCircuitBreakerStatus)
+	s.mux.HandleFunc("POST /api/v1/circuit-breaker/reset", s.requireAPIKey(s.mgHandleCircuitBreakerReset))
+
+	// ── M3U ────────────────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/modify_m3u", s.mgHandleModifyM3U)
+
+	// ── Debug ──────────────────────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/version", s.mgHandleVersion)
+	s.mux.HandleFunc("GET /api/v1/auth/status", s.mgHandleAuthStatus)
+
+	// ── SSE streams ───────────────────────────────────────────────────────────
+	s.registerSSERoutes()
+
+	// ── Static files (React panel + favicons) ─────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/docs", s.mgHandleDocs)
+	s.mux.HandleFunc("GET /api/v1/spec", s.mgHandleSpec)
+	s.registerStaticRoutes()
+}
+
+// ─── Engines ─────────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleListEngines(w http.ResponseWriter, r *http.Request) {
+	engines := s.st.ListEngines()
+	streamCounts := s.st.GetStreamCounts()
+
+	type engineOut struct {
+		ContainerID     string            `json:"container_id"`
+		ContainerName   string            `json:"container_name"`
+		Host            string            `json:"host"`
+		Port            int               `json:"port"`
+		APIPort         int               `json:"api_port"`
+		Labels          map[string]string `json:"labels"`
+		Forwarded       bool              `json:"forwarded"`
+		VPNContainer    string            `json:"vpn_container,omitempty"`
+		HealthStatus    string            `json:"health_status"`
+		P2PPort         int               `json:"p2p_port,omitempty"`
+		FirstSeen       time.Time         `json:"first_seen"`
+		LastSeen        time.Time         `json:"last_seen"`
+		Draining        bool              `json:"draining"`
+		DrainReason     string            `json:"drain_reason,omitempty"`
+		StreamCount     int               `json:"stream_count"`
+		TotalPeers      int               `json:"total_peers"`
+		TotalSpeedDown  int               `json:"total_speed_down"`
+		TotalSpeedUp    int               `json:"total_speed_up"`
+		LastHealthCheck *time.Time        `json:"last_health_check,omitempty"`
+		LastStreamUsage *time.Time        `json:"last_stream_usage,omitempty"`
+		EngineVariant   string            `json:"engine_variant,omitempty"`
+		Platform        string            `json:"platform,omitempty"`
+		Version         string            `json:"version,omitempty"`
+		ForwardedPort   *int              `json:"forwarded_port,omitempty"`
+		CPUPercent      float64           `json:"cpu_percent"`
+		MemoryUsage     int64             `json:"memory_usage"`
+		MemoryPercent   float64           `json:"memory_percent"`
+		Streams         []string          `json:"streams"`
+	}
+
+	out := make([]engineOut, 0, len(engines))
+	for _, e := range engines {
+		labels := e.Labels
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		streams := e.Streams
+		if streams == nil {
+			streams = []string{}
+		}
+		out = append(out, engineOut{
+			ContainerID:        e.ContainerID,
+			ContainerName:      e.ContainerName,
+			Host:               e.Host,
+			Port:               e.Port,
+			APIPort:            e.APIPort,
+			Labels:             labels,
+			Forwarded:          e.Forwarded,
+			VPNContainer:       e.VPNContainer,
+			HealthStatus:       string(e.HealthStatus),
+			P2PPort:            e.P2PPort,
+			FirstSeen:          e.FirstSeen,
+			LastSeen:           e.LastSeen,
+			Draining:           e.Draining,
+			DrainReason:        e.DrainReason,
+			StreamCount:     streamCounts[e.ContainerID],
+			TotalPeers:      e.TotalPeers,
+			TotalSpeedDown:  e.TotalSpeedDown,
+			TotalSpeedUp:    e.TotalSpeedUp,
+			LastHealthCheck: e.LastHealthCheck,
+			LastStreamUsage:    e.LastStreamUsage,
+			EngineVariant:      e.EngineVariant,
+			Platform:           e.Platform,
+			Version:            e.Version,
+			ForwardedPort:      e.ForwardedPort,
+			CPUPercent:         e.CPUPercent,
+			MemoryUsage:        e.MemoryUsage,
+			MemoryPercent:      e.MemoryPercent,
+			Streams:            streams,
+		})
+	}
+	mgWriteJSON(w, http.StatusOK, out)
+}
+
+func (s *ProxyServer) mgHandleEnginesWithMetrics(w http.ResponseWriter, r *http.Request) {
+	s.mgHandleListEngines(w, r)
+}
+
+func (s *ProxyServer) mgHandleGetEngine(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	e, ok := s.st.GetEngine(id)
+	if !ok {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "engine not found"})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, e)
+}
+
+func (s *ProxyServer) mgHandleDeleteEngine(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.st.GetEngine(id); !ok {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "engine not found"})
+		return
+	}
+	s.st.MarkEngineDraining(id, "manual deletion")
+	go func() {
+		if err := cpengine.StopContainer(context.Background(), id, true); err != nil {
+			slog.Warn("stop container error during manual delete", "id", id, "err", err)
+		}
+	}()
+	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "deleting"})
+}
+
+func (s *ProxyServer) mgHandleAllEngineStats(w http.ResponseWriter, r *http.Request) {
+	engines := s.st.ListEngines()
+	ids := make([]string, 0, len(engines))
+	for _, e := range engines {
+		ids = append(ids, e.ContainerID)
+	}
+	stats := cpdocker.GetAllContainerStats(r.Context(), ids)
+	mgWriteJSON(w, http.StatusOK, stats)
+}
+
+func (s *ProxyServer) mgHandleEngineStatsTotal(w http.ResponseWriter, r *http.Request) {
+	engines := s.st.ListEngines()
+	streams := s.st.ListStreams()
+	vpns := s.st.ListVPNNodes()
+	var healthy, draining int
+	for _, e := range engines {
+		if e.HealthStatus == state.HealthHealthy {
+			healthy++
+		}
+		if e.Draining {
+			draining++
+		}
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"engines_total":    len(engines),
+		"engines_healthy":  healthy,
+		"engines_draining": draining,
+		"streams_active":   len(streams),
+		"vpn_nodes_total":  len(vpns),
+	})
+}
+
+func (s *ProxyServer) mgHandleEngineStatsSingle(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := cpdocker.GetContainerStats(r.Context(), id)
+	if err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, st)
+}
+
+// ─── Containers ──────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleContainerInspect(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cli, err := cpengine.NewDockerClientExported()
+	if err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer cli.Close()
+	info, err := cli.ContainerInspect(r.Context(), id)
+	if err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, info)
+}
+
+func (s *ProxyServer) mgHandleDeleteContainer(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.st.MarkEngineDraining(id, "manual container deletion")
+	go func() {
+		if err := cpengine.StopContainer(context.Background(), id, true); err != nil {
+			slog.Warn("stop container error during manual container delete", "id", id, "err", err)
+		}
+	}()
+	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "deleting"})
+}
+
+func (s *ProxyServer) mgHandleContainerLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	tail := r.URL.Query().Get("tail")
+	timestamps := r.URL.Query().Get("timestamps") == "true"
+	var sinceUnix int64
+	if ss := r.URL.Query().Get("since_seconds"); ss != "" {
+		if n, err := strconv.Atoi(ss); err == nil && n > 0 {
+			sinceUnix = time.Now().Unix() - int64(n)
+		}
+	}
+	lines, err := cpdocker.GetContainerLogs(r.Context(), id, tail, timestamps, sinceUnix)
+	if err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"logs":         strings.Join(lines, "\n"),
+		"container_id": id,
+		"fetched_at":   time.Now().UTC(),
+	})
+}
+
+// ─── Streams ─────────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleListStreams(w http.ResponseWriter, r *http.Request) {
+	streams := s.st.ListStreams()
+	mgWriteJSON(w, http.StatusOK, streams)
+}
+
+func (s *ProxyServer) mgHandleDeleteStream(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, ok := s.st.GetStream(id)
+	if !ok {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
+		return
+	}
+	if st.CommandURL != "" {
+		stopURL := st.CommandURL + "?method=stop"
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if req, err := http.NewRequestWithContext(ctx, http.MethodGet, stopURL, nil); err == nil {
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				slog.Warn("stop command failed for stream", "id", id, "err", err)
+			} else {
+				resp.Body.Close()
+			}
+		}
+	}
+	s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: id, Reason: "manual_stop_via_api"})
+	mgWriteJSON(w, http.StatusOK, map[string]string{"message": "Stream stopped successfully", "stream_id": id})
+}
+
+func (s *ProxyServer) mgHandleBatchStopStreams(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	var commandURLs []string
+	if err := json.NewDecoder(r.Body).Decode(&commandURLs); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json: expected array of command_urls"})
+		return
+	}
+	type result struct {
+		CommandURL string `json:"command_url"`
+		Success    bool   `json:"success"`
+		Message    string `json:"message"`
+		StreamID   string `json:"stream_id,omitempty"`
+	}
+	results := make([]result, 0, len(commandURLs))
+	successCount := 0
+	for _, cmdURL := range commandURLs {
+		res := result{CommandURL: cmdURL}
+		var found *state.StreamState
+		for _, s := range s.st.ListStreams() {
+			if s.CommandURL == cmdURL {
+				found = s
+				break
+			}
+		}
+		if found == nil {
+			res.Message = "Stream not found"
+			results = append(results, res)
+			continue
+		}
+		res.StreamID = found.ID
+		if found.Status != "started" {
+			res.Message = fmt.Sprintf("Stream is not active (status: %s)", found.Status)
+			results = append(results, res)
+			continue
+		}
+		stopURL := cmdURL + "?method=stop"
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		if req, err := http.NewRequestWithContext(ctx, http.MethodGet, stopURL, nil); err == nil {
+			if resp, err := http.DefaultClient.Do(req); err != nil {
+				slog.Warn("batch stop command failed", "url", cmdURL, "err", err)
+			} else {
+				resp.Body.Close()
+			}
+		}
+		cancel()
+		s.st.OnStreamEnded(state.StreamEndedEvent{
+			ContentID:   found.ID,
+			ContainerID: found.ContainerID,
+			Reason:      "batch_stop_via_api",
+		})
+		res.Success = true
+		res.Message = "Stream stopped successfully"
+		successCount++
+		results = append(results, res)
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"total":         len(commandURLs),
+		"success_count": successCount,
+		"failure_count": len(commandURLs) - successCount,
+		"results":       results,
+	})
+}
+
+func (s *ProxyServer) mgHandleStreamStats(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.st.GetStream(id); !ok {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
+		return
+	}
+	snaps := s.st.GetStats(id)
+	if snaps == nil {
+		snaps = []*state.StatSnapshot{}
+	}
+	mgWriteJSON(w, http.StatusOK, snaps)
+}
+
+func (s *ProxyServer) mgHandleStreamExtendedStats(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, ok := s.st.GetStream(id)
+	if !ok {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"available":      true,
+		"stream_id":      id,
+		"peers":          st.Peers,
+		"speed_down":     st.SpeedDown,
+		"speed_up":       st.SpeedUp,
+		"downloaded":     st.Downloaded,
+		"uploaded":       st.Uploaded,
+		"bitrate":        st.Bitrate,
+		"livepos":        st.Livepos,
+		"active_clients": st.ActiveClients,
+		"status":         st.Status,
+	})
+}
+
+func (s *ProxyServer) mgHandleStreamLivepos(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, ok := s.st.GetStream(id)
+	if !ok {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{"content_id": id, "livepos": st.Livepos})
+}
+
+// ─── Provisioning ────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleProvision(w http.ResponseWriter, r *http.Request) {
+	if s.ctrl == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "controller not available"})
+		return
+	}
+	s.ctrl.EnsureMinimum()
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "reconciling"})
+}
+
+func (s *ProxyServer) mgHandleProvisionAcestream(w http.ResponseWriter, r *http.Request) {
+	if s.ctrl == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "controller not available"})
+		return
+	}
+	current := s.st.GetDesiredReplicas()
+	s.ctrl.ScaleTo(current + 1)
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "provisioning"})
+}
+
+func (s *ProxyServer) mgHandleScale(w http.ResponseWriter, r *http.Request) {
+	demand := r.PathValue("demand")
+	var desired int
+	if _, err := fmt.Sscanf(demand, "%d", &desired); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid demand"})
+		return
+	}
+	if s.ctrl == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "controller not available"})
+		return
+	}
+	s.ctrl.ScaleTo(desired)
+	mgWriteJSON(w, http.StatusOK, map[string]any{"desired": desired, "status": "scaling"})
+}
+
+func (s *ProxyServer) mgHandleGC(w http.ResponseWriter, r *http.Request) {
+	if s.ctrl != nil {
+		s.ctrl.Nudge("manual gc")
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *ProxyServer) mgHandleReconcile(w http.ResponseWriter, r *http.Request) {
+	if s.ctrl != nil {
+		s.ctrl.Nudge("manual reconcile")
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *ProxyServer) mgHandleByLabel(w http.ResponseWriter, r *http.Request) {
+	// Python uses `key` param, not `label`
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		key = r.URL.Query().Get("label")
+	}
+	value := r.URL.Query().Get("value")
+	engines := s.st.ListEngines()
+	if key == "" {
+		mgWriteJSON(w, http.StatusOK, engines)
+		return
+	}
+	var matched []*state.Engine
+	for _, e := range engines {
+		if v, ok := e.Labels[key]; ok && (value == "" || v == value) {
+			matched = append(matched, e)
+		}
+	}
+	if matched == nil {
+		matched = []*state.Engine{}
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{"engines": matched, "key": key, "value": value})
+}
+
+// ─── VPN nodes ───────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleListVPNNodes(w http.ResponseWriter, r *http.Request) {
+	mgWriteJSON(w, http.StatusOK, s.st.ListVPNNodes())
+}
+
+func (s *ProxyServer) mgHandleProvisionVPNNode(w http.ResponseWriter, r *http.Request) {
+	if s.prov == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "VPN provisioner not available"})
+		return
+	}
+	result, err := s.prov.ProvisionNode(r.Context())
+	if err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	mgWriteJSON(w, http.StatusCreated, result)
+}
+
+func (s *ProxyServer) mgHandleDrainVPNNode(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if _, ok := s.st.GetVPNNode(name); !ok {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "VPN node not found"})
+		return
+	}
+	s.st.SetVPNNodeDraining(name)
+	if s.pub != nil {
+		if node, ok := s.st.GetVPNNode(name); ok {
+			s.pub.PublishVPNNode(r.Context(), node)
+		}
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "draining"})
+}
+
+func (s *ProxyServer) mgHandleDestroyVPNNode(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if s.prov == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "VPN provisioner not available"})
+		return
+	}
+	s.st.SetVPNNodeDraining(name)
+	go func() {
+		if err := s.prov.DestroyNode(context.Background(), name); err != nil {
+			slog.Warn("failed to destroy VPN node asynchronously", "name", name, "err", err)
+		}
+	}()
+	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "destroying"})
+}
+
+func (s *ProxyServer) mgHandleVPNCredentials(w http.ResponseWriter, r *http.Request) {
+	if s.creds == nil {
+		mgWriteJSON(w, http.StatusOK, map[string]any{"total": 0, "available": 0, "leased": 0})
+		return
+	}
+	summary := s.creds.Summary()
+
+	// If the in-memory lease map is stale (for example after restart/reconcile
+	// races), rebuild lease observability from live VPN node state so the UI
+	// reflects real leases.
+	toInt := func(v any) int {
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		default:
+			return 0
+		}
+	}
+	currentLeased := toInt(summary["leased"])
+	if currentLeased == 0 {
+		nodes := s.st.ListVPNNodes()
+		derivedByCred := make(map[string]map[string]any)
+		for _, n := range nodes {
+			credID := strings.TrimSpace(n.CredentialID)
+			if credID == "" {
+				continue
+			}
+			entry := map[string]any{
+				"container_id":  n.ContainerName,
+				"credential_id": credID,
+			}
+			if !n.FirstSeen.IsZero() {
+				entry["leased_at"] = n.FirstSeen
+			}
+			derivedByCred[credID] = entry
+		}
+		if len(derivedByCred) > 0 {
+			derivedLeases := make([]map[string]any, 0, len(derivedByCred))
+			for _, l := range derivedByCred {
+				derivedLeases = append(derivedLeases, l)
+			}
+			total := toInt(summary["total"])
+			leased := len(derivedLeases)
+			available := total - leased
+			if available < 0 {
+				available = 0
+			}
+			summary["leased"] = leased
+			summary["available"] = available
+			summary["leases"] = derivedLeases
+		}
+	}
+
+	mgWriteJSON(w, http.StatusOK, summary)
+}
+
+func (s *ProxyServer) mgHandleVPNServersRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.svcRefresh == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "servers refresh service not available"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	var body struct {
+		Source          string         `json:"source"`
+		GluetunJSONMode string         `json:"gluetun_json_mode"`
+		Filters         map[string]any `json:"filters"`
+	}
+
+	// We read the body to check the source. If it's proton_paid, we'll
+	// proxy the original request to the sidecar.
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read request body"})
+		return
+	}
+	_ = json.Unmarshal(bodyBytes, &body)
+
+	if body.Source == "proton_paid" {
+		// Re-assign body so mgHandleProtonRefresh can read it again.
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		s.mgHandleProtonRefresh(w, r)
+		return
+	}
+
+	// Default: Official Gluetun source.
+	go func() {
+		if err := s.svcRefresh.RefreshOfficial(context.Background()); err != nil {
+			slog.Warn("VPN servers manual refresh failed", "err", err)
+		}
+	}()
+	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "refresh started", "source": "gluetun_official"})
+}
+
+// ─── VPN ─────────────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleVPNStatus(w http.ResponseWriter, r *http.Request) {
+	nodes := s.st.ListVPNNodes()
+	healthy := 0
+	for _, n := range nodes {
+		if n.Healthy {
+			healthy++
+		}
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"vpn_enabled":   config.C.Load().VPNEnabled,
+		"nodes_total":   len(nodes),
+		"nodes_healthy": healthy,
+		"vpn_nodes":     nodes,
+	})
+}
+
+func (s *ProxyServer) mgHandleGetVPNConfig(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, s.settings.Get("vpn_settings"))
+}
+
+func (s *ProxyServer) mgHandleSetVPNConfig(w http.ResponseWriter, r *http.Request) {
+	s.mgHandleSetSettingsCategory("vpn_settings")(w, r)
+}
+
+func (s *ProxyServer) mgHandleParseWireGuard(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	var body struct {
+		Config      string `json:"config"`
+		FileContent string `json:"file_content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	cfg := body.Config
+	if cfg == "" {
+		cfg = body.FileContent
+	}
+	result := parseWireGuardConfig(cfg)
+	mgWriteJSON(w, http.StatusOK, result)
+}
+
+func (s *ProxyServer) mgHandleProtonRefresh(w http.ResponseWriter, r *http.Request) {
+	protonURL := os.Getenv("PROTON_SERVICE_URL")
+	if protonURL == "" {
+		protonURL = "http://localhost:9099"
+	}
+	// Read incoming body (if any) and merge with credentials from settings
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	var incoming map[string]any
+	if r.Body != nil {
+		if data, err := io.ReadAll(r.Body); err == nil && len(data) > 0 {
+			_ = json.Unmarshal(data, &incoming) // ignore errors, we'll default to empty map
+		}
+	}
+	if incoming == nil {
+		incoming = map[string]any{}
+	}
+
+	// If settings are available and credentials source is 'settings', inject them when not provided.
+	if s.settings != nil {
+		vpn := s.settings.Get("vpn_settings")
+		if src, _ := vpn["vpn_servers_proton_credentials_source"].(string); src == "settings" {
+			if u, _ := vpn["vpn_servers_proton_username"].(string); u != "" {
+				if _, ok := incoming["proton_username"]; !ok {
+					incoming["proton_username"] = u
+				}
+			}
+			if p, _ := vpn["vpn_servers_proton_password"].(string); p != "" {
+				if _, ok := incoming["proton_password"]; !ok {
+					incoming["proton_password"] = p
+				}
+			}
+			if s2, _ := vpn["vpn_servers_proton_totp_secret"].(string); s2 != "" {
+				if _, ok := incoming["proton_totp_secret"]; !ok {
+					incoming["proton_totp_secret"] = s2
+				}
+			}
+			if c, _ := vpn["vpn_servers_proton_totp_code"].(string); c != "" {
+				if _, ok := incoming["proton_totp_code"]; !ok {
+					incoming["proton_totp_code"] = c
+				}
+			}
+		}
+	}
+
+	bodyBytes, _ := json.Marshal(incoming)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, protonURL+"/refresh", bytes.NewReader(bodyBytes))
+	if err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Warn("proton refresh failed", "err", err)
+		mgWriteJSON(w, http.StatusBadGateway, map[string]string{"error": "proton service unavailable: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	var payload any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil {
+		json.NewEncoder(w).Encode(payload) //nolint:errcheck
+	}
+}
+
+func (s *ProxyServer) mgHandleVPNServersRefreshStatus(w http.ResponseWriter, r *http.Request) {
+	if s.svcRefresh == nil {
+		mgWriteJSON(w, http.StatusOK, map[string]any{"in_progress": false})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, s.svcRefresh.Status())
+}
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+
+var mgValidCategories = map[string]bool{
+	"engine_config":         true,
+	"engine_settings":       true,
+	"orchestrator_settings": true,
+	"proxy_settings":        true,
+	"vpn_settings":          true,
+	"custom_variant_config": true,
+}
+
+func (s *ProxyServer) mgHandleGetAllSettings(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, s.settings.GetAll())
+}
+
+func (s *ProxyServer) mgHandleUpdateAllSettings(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	var body map[string]map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	applied := map[string]bool{}
+	for cat, payload := range body {
+		if !mgValidCategories[cat] {
+			continue
+		}
+		if err := s.settings.Save(cat, payload); err != nil {
+			applied[cat] = false
+		} else {
+			applied[cat] = true
+			switch cat {
+			case "proxy_settings":
+				config.ApplySettings(payload)
+			case "engine_settings":
+				config.ApplyEngineSettings(payload)
+				if s.ctrl != nil {
+					s.ctrl.EnsureMinimum()
+				}
+			case "orchestrator_settings":
+				config.ApplyOrchestratorSettings(payload)
+				if s.ctrl != nil {
+					s.ctrl.EnsureMinimum()
+				}
+			case "engine_config":
+				config.ApplyEngineConfig(payload)
+				go cpengine.PushEngineConfig(context.Background(), payload)
+				if s.ctrl != nil {
+					s.ctrl.EnsureMinimum()
+				}
+			case "vpn_settings":
+				config.ApplyVPNSettings(payload)
+				if s.creds != nil {
+					if c, ok := payload["credentials"].([]any); ok {
+						var mapped []map[string]any
+						for _, item := range c {
+							if m, ok := item.(map[string]any); ok {
+								mapped = append(mapped, m)
+							}
+						}
+						s.creds.Configure(mapped)
+					}
+				}
+				if s.vpnMgr != nil {
+					s.vpnMgr.Nudge("settings_change")
+				}
+				if s.ctrl != nil {
+					s.ctrl.EnsureMinimum()
+				}
+			case "vpn_credentials":
+				if s.vpnMgr != nil {
+					s.vpnMgr.Nudge("credentials_change")
+				}
+				if s.ctrl != nil {
+					s.ctrl.EnsureMinimum()
+				}
+			}
+		}
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{"applied": applied, "settings": s.settings.GetAll()})
+}
+
+func (s *ProxyServer) mgHandleExportSettings(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
+		return
+	}
+	all := s.settings.GetAll()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, cat := range []string{"engine_config", "engine_settings", "proxy_settings", "orchestrator_settings"} {
+		data, _ := json.MarshalIndent(all[cat], "", "  ")
+		f, err := zw.Create(cat + ".json")
+		if err != nil {
+			continue
+		}
+		f.Write(data)
+	}
+	zw.Close()
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="orchestrator_settings.zip"`)
+	w.WriteHeader(http.StatusOK)
+	w.Write(buf.Bytes())
+}
+
+func (s *ProxyServer) mgHandleImportSettings(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
+		return
+	}
+
+	q := r.URL.Query()
+	wantEngineConfig := q.Get("import_engine_config") == "true"
+	wantProxy := q.Get("import_proxy") == "true"
+	wantEngine := q.Get("import_engine") == "true"
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 50<<20))
+	if err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read body"})
+		return
+	}
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid zip file"})
+		return
+	}
+
+	fileContents := map[string]map[string]any{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		var payload map[string]any
+		if jsonErr := json.NewDecoder(rc).Decode(&payload); jsonErr == nil {
+			fileContents[strings.TrimSuffix(f.Name, ".json")] = payload
+		}
+		rc.Close()
+	}
+
+	applyCategory := func(cat string, payload map[string]any) error {
+		if err := s.settings.Save(cat, payload); err != nil {
+			return err
+		}
+		switch cat {
+		case "proxy_settings":
+			config.ApplySettings(payload)
+		case "engine_settings":
+			config.ApplyEngineSettings(payload)
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+		case "engine_config":
+			config.ApplyEngineConfig(payload)
+			go cpengine.PushEngineConfig(context.Background(), payload)
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+		}
+		return nil
+	}
+
+	type importedResult struct {
+		EngineConfig bool     `json:"engine_config"`
+		Proxy        bool     `json:"proxy"`
+		Engine       bool     `json:"engine"`
+		Errors       []string `json:"errors"`
+	}
+	result := importedResult{Errors: []string{}}
+
+	if wantEngineConfig {
+		if payload, ok := fileContents["engine_config"]; ok {
+			if err := applyCategory("engine_config", payload); err != nil {
+				result.Errors = append(result.Errors, "engine_config: "+err.Error())
+			} else {
+				result.EngineConfig = true
+			}
+		} else {
+			result.Errors = append(result.Errors, "engine_config: not found in zip")
+		}
+	}
+	if wantProxy {
+		if payload, ok := fileContents["proxy_settings"]; ok {
+			if err := applyCategory("proxy_settings", payload); err != nil {
+				result.Errors = append(result.Errors, "proxy_settings: "+err.Error())
+			} else {
+				result.Proxy = true
+			}
+		} else {
+			result.Errors = append(result.Errors, "proxy_settings: not found in zip")
+		}
+	}
+	if wantEngine {
+		if payload, ok := fileContents["engine_settings"]; ok {
+			if err := applyCategory("engine_settings", payload); err != nil {
+				result.Errors = append(result.Errors, "engine_settings: "+err.Error())
+			} else {
+				result.Engine = true
+			}
+		} else {
+			result.Errors = append(result.Errors, "engine_settings: not found in zip")
+		}
+	}
+
+	mgWriteJSON(w, http.StatusOK, map[string]any{"imported": result})
+}
+
+func (s *ProxyServer) mgHandleGetSettingsCategory(cat string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.settings == nil {
+			mgWriteJSON(w, http.StatusOK, map[string]any{})
+			return
+		}
+		mgWriteJSON(w, http.StatusOK, s.settings.Get(cat))
+	}
+}
+
+func (s *ProxyServer) mgHandleSetSettingsCategory(cat string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.settings == nil {
+			mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		if err := s.settings.Save(cat, payload); err != nil {
+			mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		switch cat {
+		case "proxy_settings":
+			config.ApplySettings(payload)
+		case "engine_settings":
+			config.ApplyEngineSettings(payload)
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+		case "orchestrator_settings":
+			config.ApplyOrchestratorSettings(payload)
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+		case "engine_config":
+			config.ApplyEngineConfig(payload)
+			// Push live-settable fields to running engines without restart.
+			go cpengine.PushEngineConfig(context.Background(), payload)
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+		case "vpn_settings":
+			config.ApplyVPNSettings(payload)
+			if s.creds != nil {
+				if c, ok := payload["credentials"].([]any); ok {
+					var mapped []map[string]any
+					for _, item := range c {
+						if m, ok := item.(map[string]any); ok {
+							mapped = append(mapped, m)
+						}
+					}
+					s.creds.Configure(mapped)
+				}
+			}
+			markedCount := 0
+			// If VPN was toggled, mark engines for migration immediately.
+			targetHash := cpengine.ComputeConfigHash()
+			for _, e := range state.Global.ListEngines() {
+				if (e.Labels["acestream.config_hash"] != targetHash) && !e.Draining {
+					if state.Global.MarkEngineDraining(e.ContainerID, "config_drift_vpn") {
+						markedCount++
+					}
+				}
+			}
+
+			if s.vpnMgr != nil {
+				s.vpnMgr.Nudge("settings_change")
+			}
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+
+			resp := s.settings.Get(cat)
+			resp["migration_marked_engines"] = markedCount
+			mgWriteJSON(w, http.StatusOK, resp)
+			return
+
+		case "vpn_credentials":
+			if s.vpnMgr != nil {
+				s.vpnMgr.Nudge("credentials_change")
+			}
+			if s.ctrl != nil {
+				s.ctrl.EnsureMinimum()
+			}
+		}
+		mgWriteJSON(w, http.StatusOK, s.settings.Get(cat))
+	}
+}
+
+// mgHandleSetProxyConfig accepts both JSON body and query-string params (the
+// React frontend posts proxy settings as ?key=value query params).
+func (s *ProxyServer) mgHandleSetProxyConfig(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
+		return
+	}
+	payload := map[string]any{}
+	// Try JSON body first; fall back to query params.
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || len(payload) == 0 {
+		q := r.URL.Query()
+		for k, vals := range q {
+			if len(vals) > 0 {
+				payload[k] = vals[0]
+			}
+		}
+	}
+	if err := s.settings.Save("proxy_settings", payload); err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	config.ApplySettings(payload)
+	mgWriteJSON(w, http.StatusOK, map[string]any{"message": "Proxy settings saved", "settings": s.settings.Get("proxy_settings")})
+}
+
+func (s *ProxyServer) mgHandleAddVPNCredential(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	var cred map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&cred); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if cred["id"] == nil || cred["id"] == "" {
+		cred["id"] = generateID()
+	}
+	vpnSettings := s.settings.Get("vpn_settings")
+	creds, _ := vpnSettings["credentials"].([]any)
+	creds = append(creds, cred)
+	vpnSettings["credentials"] = creds
+	if err := s.settings.Save("vpn_settings", vpnSettings); err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	// Reconfigure the in-memory credential manager if available.
+	if s.creds != nil {
+		rawCreds := make([]map[string]interface{}, 0, len(creds))
+		for _, c := range creds {
+			if m, ok := c.(map[string]interface{}); ok {
+				rawCreds = append(rawCreds, m)
+			}
+		}
+		_ = s.creds.Configure(rawCreds)
+	}
+	mgWriteJSON(w, http.StatusCreated, map[string]any{"credential": cred, "credentials_count": len(creds)})
+}
+
+func (s *ProxyServer) mgHandleDeleteVPNCredential(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
+		return
+	}
+	id := r.PathValue("id")
+	vpnSettings := s.settings.Get("vpn_settings")
+	creds, _ := vpnSettings["credentials"].([]any)
+	var remaining []any
+	found := false
+	for _, raw := range creds {
+		if item, ok := raw.(map[string]any); ok {
+			if item["id"] == id {
+				found = true
+				continue
+			}
+		}
+		remaining = append(remaining, raw)
+	}
+	if !found {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "credential not found"})
+		return
+	}
+	vpnSettings["credentials"] = remaining
+	if err := s.settings.Save("vpn_settings", vpnSettings); err != nil {
+		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	// Reconfigure the in-memory credential manager if available.
+	if s.creds != nil {
+		rawCreds := make([]map[string]interface{}, 0, len(remaining))
+		for _, c := range remaining {
+			if m, ok := c.(map[string]interface{}); ok {
+				rawCreds = append(rawCreds, m)
+			}
+		}
+		_ = s.creds.Configure(rawCreds)
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{"credentials_count": len(remaining)})
+}
+
+// ─── Rolling reprovision ──────────────────────────────────────────────────────
+
+var reprovisionStatus = map[string]any{
+	"status":   "idle",
+	"progress": 0,
+}
+
+func (s *ProxyServer) mgHandleReprovisionStatus(w http.ResponseWriter, r *http.Request) {
+	mgWriteJSON(w, http.StatusOK, reprovisionStatus)
+}
+
+func (s *ProxyServer) mgHandleReprovision(w http.ResponseWriter, r *http.Request) {
+	if s.ctrl != nil {
+		s.ctrl.Nudge("reprovision")
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *ProxyServer) mgHandlePlatform(w http.ResponseWriter, r *http.Request) {
+	mgWriteJSON(w, http.StatusOK, map[string]string{"platform": "linux/amd64"})
+}
+
+// ─── Observability ───────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleHealthStatus(w http.ResponseWriter, r *http.Request) {
+	engines := s.st.ListEngines()
+	var healthy, unhealthy, draining int
+	for _, e := range engines {
+		switch {
+		case e.Draining:
+			draining++
+		case e.HealthStatus == state.HealthHealthy:
+			healthy++
+		default:
+			unhealthy++
+		}
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"status":            "healthy",
+		"engines_total":     len(engines),
+		"engines_healthy":   healthy,
+		"engines_unhealthy": unhealthy,
+		"engines_draining":  draining,
+		"timestamp":         time.Now().UTC(),
+	})
+}
+
+func (s *ProxyServer) mgHandleCircuitBreakerStatus(w http.ResponseWriter, r *http.Request) {
+	if s.cb == nil {
+		mgWriteJSON(w, http.StatusOK, map[string]any{"general": "closed", "replacement": "closed"})
+		return
+	}
+	mgWriteJSON(w, http.StatusOK, s.cb.GetStatus())
+}
+
+func (s *ProxyServer) mgHandleCircuitBreakerReset(w http.ResponseWriter, r *http.Request) {
+	if s.cb != nil {
+		s.cb.ForceReset("general")
+		s.cb.ForceReset("replacement")
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "reset"})
+}
+
+func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.Request) {
+	cfg := config.C.Load()
+	engines := s.st.ListEngines()
+	streams := s.st.ListStreams()
+	vpns := s.st.ListVPNNodes()
+
+	var healthy, unhealthy, draining int
+	for _, e := range engines {
+		switch {
+		case e.Draining:
+			draining++
+		case e.HealthStatus == state.HealthHealthy:
+			healthy++
+		case e.HealthStatus == state.HealthUnhealthy:
+			unhealthy++
+		}
+	}
+
+	activeStreams := 0
+	var allClients []map[string]any
+	totalClients := 0
+	for _, st := range streams {
+		if st.Status == "started" || st.Status == "playing" || st.Status == "prebuf" {
+			activeStreams++
+			totalClients += st.ActiveClients
+			for _, c := range st.Clients {
+				cc := make(map[string]any)
+				for k, v := range c {
+					cc[k] = v
+				}
+				cc["stream_id"] = st.ID
+				cc["content_id"] = st.ContentID
+				allClients = append(allClients, cc)
+			}
+		}
+	}
+
+	vpnEnabled := cfg.VPNEnabled
+	vpnHealthy := 0
+	for _, v := range vpns {
+		if v.Healthy {
+			vpnHealthy++
+		}
+	}
+
+	var cbState string
+	var lastFailure any
+	if s.cb != nil {
+		cbStatus := s.cb.GetStatus()
+		if gen, ok := cbStatus["general"].(map[string]any); ok {
+			cbState, _ = gen["state"].(string)
+			lastFailure = gen["last_failure_time"]
+		}
+	}
+	if cbState == "" {
+		cbState = "closed"
+	}
+
+	totalCapacity := len(engines)
+	usedCapacity := 0
+	streamCounts := s.st.GetStreamCounts()
+	for _, e := range engines {
+		if streamCounts[e.ContainerID] > 0 {
+			usedCapacity++
+		}
+	}
+	availableCapacity := totalCapacity - usedCapacity
+	if availableCapacity < 0 {
+		availableCapacity = 0
+	}
+
+	canProvision := cbState == "closed"
+	var blockedReason any
+	if !canProvision {
+		blockedReason = map[string]any{
+			"code":    "circuit_breaker",
+			"message": fmt.Sprintf("Provisioning circuit breaker is %s", cbState),
+		}
+	}
+
+	var overallStatus string
+	switch {
+	case len(engines) == 0:
+		overallStatus = "unavailable"
+	case !canProvision:
+		overallStatus = "degraded"
+	default:
+		overallStatus = "healthy"
+	}
+
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"status": overallStatus,
+		"engines": map[string]any{
+			"total":     len(engines),
+			"running":   healthy + unhealthy,
+			"healthy":   healthy,
+			"unhealthy": unhealthy,
+			"draining":  draining,
+		},
+		"streams": map[string]any{
+			"active": activeStreams,
+			"total":  len(streams),
+		},
+		"telemetry": map[string]any{
+			"bytes_egress_total": telemetry.DefaultTelemetry.GetTotalEgress(),
+		},
+		"proxy": map[string]any{
+			"active_clients": map[string]any{
+				"total": totalClients,
+				"list":  allClients,
+			},
+			"throughput": map[string]any{
+				"egress_mbps": telemetry.DefaultTelemetry.GetEgressMbps(),
+			},
+		},
+		"capacity": map[string]any{
+			"total":        totalCapacity,
+			"used":         usedCapacity,
+			"available":    availableCapacity,
+			"max_replicas": cfg.MaxReplicas,
+			"min_replicas": cfg.MinReplicas,
+		},
+		"vpn": map[string]any{
+			"enabled":     vpnEnabled,
+			"nodes_total": len(vpns),
+			"healthy":     vpnHealthy,
+		},
+		"provisioning": map[string]any{
+			"can_provision":         canProvision,
+			"circuit_breaker_state": cbState,
+			"last_failure":          lastFailure,
+			"blocked_reason":        blockedReason,
+		},
+		"config": map[string]any{
+			"proxy_listen":   cfg.ProxyListenAddr,
+			"orchestrator":   cfg.OrchestratorListenAddr,
+			"auto_delete":    cfg.AutoDelete,
+			"grace_period_s": cfg.GracePeriod.Seconds(),
+			"min_replicas":   cfg.MinReplicas,
+			"max_replicas":   cfg.MaxReplicas,
+		},
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+func (s *ProxyServer) mgHandleMetricsDashboard(w http.ResponseWriter, r *http.Request) {
+	windowSeconds := 900
+	if raw := r.URL.Query().Get("window_seconds"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			windowSeconds = parsed
+		}
+	}
+	snapshot := buildDashboardSnapshot(s.st, windowSeconds)
+	mgWriteJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *ProxyServer) mgHandleMetricsPerformance(w http.ResponseWriter, r *http.Request) {
+	mgWriteJSON(w, http.StatusOK, map[string]any{"operations": map[string]any{}})
+}
+
+func (s *ProxyServer) mgHandleEvents(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	filter := r.URL.Query().Get("event_type")
+	events, _ := state.GetEventsSnapshot(limit, filter)
+	mgWriteJSON(w, http.StatusOK, events)
+}
+
+func (s *ProxyServer) mgHandleEventsStats(w http.ResponseWriter, r *http.Request) {
+	_, stats := state.GetEventsSnapshot(1, "")
+	mgWriteJSON(w, http.StatusOK, stats)
+}
+
+func (s *ProxyServer) mgHandleEventsCleanup(w http.ResponseWriter, r *http.Request) {
+	state.ClearEvents()
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *ProxyServer) mgHandleCacheStats(w http.ResponseWriter, r *http.Request) {
+	mgWriteJSON(w, http.StatusOK, map[string]any{"size": 0, "hits": 0, "misses": 0})
+}
+
+func (s *ProxyServer) mgHandleCacheClear(w http.ResponseWriter, r *http.Request) {
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+}
+
+// ─── M3U ─────────────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleModifyM3U(w http.ResponseWriter, r *http.Request) {
+	// Accept both ?m3u_url= (Python compat) and ?url= (legacy)
+	m3uURL := r.URL.Query().Get("m3u_url")
+	if m3uURL == "" {
+		m3uURL = r.URL.Query().Get("url")
+	}
+	if m3uURL == "" {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "m3u_url parameter required"})
+		return
+	}
+	// Reject non-HTTP(S) schemes to prevent SSRF via file://, gopher://, etc.
+	if parsed, err := url.Parse(m3uURL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "m3u_url must use http or https scheme"})
+		return
+	}
+	// Allow caller to override host and port
+	host := r.URL.Query().Get("host")
+	if host == "" {
+		host = r.Host
+	}
+	if port := r.URL.Query().Get("port"); port != "" {
+		// Replace or append port on host
+		if h, _, hasPort := strings.Cut(host, ":"); hasPort {
+			host = h + ":" + port
+		} else {
+			host = host + ":" + port
+		}
+	}
+	if host == "" {
+		host = "localhost:8000"
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	baseURL := scheme + "://" + host
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, m3uURL, nil)
+	if err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid url"})
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		mgWriteJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to fetch m3u: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	var buf strings.Builder
+	var line string
+	scanner := newLineScanner(resp.Body)
+	for scanner.Scan() {
+		line = scanner.Text()
+		if strings.HasPrefix(line, "acestream://") {
+			contentID := strings.TrimPrefix(line, "acestream://")
+			line = baseURL + "/ace/getstream?id=" + contentID
+		} else if strings.HasPrefix(line, "ace://") {
+			contentID := strings.TrimPrefix(line, "ace://")
+			line = baseURL + "/ace/getstream?id=" + contentID
+		}
+		buf.WriteString(line + "\n")
+	}
+
+	w.Header().Set("Content-Type", "application/x-mpegurl")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, buf.String())
+}
+
+// ─── Debug ───────────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleVersion(w http.ResponseWriter, r *http.Request) {
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"version":    versionString(),
+		"go_unified": true,
+		"timestamp":  time.Now().UTC(),
+	})
+}
+
+func (s *ProxyServer) mgHandleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	apiKey := config.C.Load().APIKey
+	mode := "none"
+	if apiKey != "" {
+		mode = "bearer"
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"required": apiKey != "",
+		"mode":     mode,
+	})
+}
+
+// ─── Static files ─────────────────────────────────────────────────────────────
+
+func staticDir() string {
+	if d := os.Getenv("STATIC_DIR"); d != "" {
+		return d
+	}
+	return "/app/app/static/panel"
+}
+
+func (s *ProxyServer) registerStaticRoutes() {
+	dir := staticDir()
+	if _, err := os.Stat(dir); err != nil {
+		slog.Debug("static dir not found, skipping static routes", "dir", dir)
+		return
+	}
+	fileServer := http.FileServer(http.Dir(dir))
+
+	for _, p := range []string{
+		"/favicon.ico", "/favicon.svg",
+		"/favicon-96x96.png", "/favicon-96x96-dark.png",
+		"/apple-touch-icon.png",
+	} {
+		path := p
+		s.mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = path
+			fileServer.ServeHTTP(w, r)
+		})
+	}
+
+	s.mux.HandleFunc("GET /panel/", func(w http.ResponseWriter, r *http.Request) {
+		trimmedPath := strings.TrimPrefix(r.URL.Path, "/panel")
+		if trimmedPath == "" || trimmedPath == "/" {
+			s.setPanelCookie(w)
+			r.URL.Path = "/"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// Check if file exists on disk.
+		fpath := filepath.Join(dir, trimmedPath)
+		info, err := os.Stat(fpath)
+		if err != nil || info.IsDir() {
+			// File not found or is a directory; serve index.html for SPA routing.
+			// Use "/" not "/index.html": FileServer redirects /index.html → ./ which
+			// resolves relative to the request path and breaks deep routes on reload.
+			s.setPanelCookie(w)
+			r.URL.Path = "/"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		r.URL.Path = trimmedPath
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
+func (s *ProxyServer) mgHandleDocs(w http.ResponseWriter, r *http.Request) {
+	// Minimal Swagger UI HTML that points to /api/v1/spec
+	html := `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AceStream Orchestrator API Docs</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" >
+    <style>
+      html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+      *, *:before, *:after { box-sizing: inherit; }
+      body { margin:0; background: #fafafa; }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"> </script>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"> </script>
+    <script>
+    window.onload = function() {
+      const ui = SwaggerUIBundle({
+        url: "/api/v1/spec",
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "StandaloneLayout"
+      })
+      window.ui = ui
+    }
+  </script>
+</body>
+</html>`
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(html))
+}
+
+func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
+	spec := map[string]any{
+		"openapi": "3.0.0",
+		"info": map[string]any{
+			"title":       "AceStream Orchestrator API",
+			"description": "Comprehensive management API for AceStream engine orchestration, VPN node lifecycle, and stream proxying.",
+			"version":     "1.0.0",
+			"contact": map[string]string{
+				"name": "AceStream Developer",
+			},
+		},
+		"tags": []map[string]string{
+			{"name": "Orchestrator", "description": "Global status and circuit breaker control"},
+			{"name": "Engines", "description": "AceStream engine lifecycle and metrics"},
+			{"name": "Streams", "description": "Active playback sessions and telemetry"},
+			{"name": "VPN", "description": "VPN node management and credentials"},
+			{"name": "Settings", "description": "Persistent configuration"},
+			{"name": "Observability", "description": "Metrics, events, and logs"},
+		},
+		"components": map[string]any{
+			"securitySchemes": map[string]any{
+				"ApiKeyAuth": map[string]string{
+					"type": "apiKey",
+					"in":   "header",
+					"name": "X-API-Key",
+				},
+			},
+			"schemas": map[string]any{
+				"Engine": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"container_id":   map[string]string{"type": "string"},
+						"container_name": map[string]string{"type": "string"},
+						"host":           map[string]string{"type": "string"},
+						"port":           map[string]string{"type": "integer"},
+						"api_port":       map[string]string{"type": "integer"},
+						"health_status":  map[string]string{"type": "string", "enum": "healthy,unhealthy,unknown"},
+						"draining":       map[string]string{"type": "boolean"},
+						"stream_count":   map[string]string{"type": "integer"},
+						"cpu_percent":    map[string]string{"type": "number"},
+						"memory_usage":   map[string]string{"type": "integer"},
+						"vpn_container":  map[string]string{"type": "string"},
+					},
+					"example": map[string]any{
+						"container_id":   "8a3f9e2b1c",
+						"container_name": "ace-engine-1",
+						"host":           "172.18.0.5",
+						"port":           8621,
+						"api_port":       19001,
+						"health_status":  "healthy",
+						"draining":       false,
+						"stream_count":   2,
+						"cpu_percent":    12.5,
+						"memory_usage":   256000000,
+						"vpn_container":  "gluetun-nordvpn",
+					},
+				},
+				"Stream": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":             map[string]string{"type": "string"},
+						"content_id":     map[string]string{"type": "string"},
+						"status":         map[string]string{"type": "string", "enum": "playing,prebuf,ended"},
+						"container_id":   map[string]string{"type": "string"},
+						"container_name": map[string]string{"type": "string"},
+						"active_clients": map[string]string{"type": "integer"},
+						"bitrate":        map[string]string{"type": "integer"},
+						"peers":          map[string]string{"type": "integer"},
+						"speed_down":     map[string]string{"type": "integer"},
+						"speed_up":       map[string]string{"type": "integer"},
+						"started_at":     map[string]string{"type": "string", "format": "date-time"},
+					},
+					"example": map[string]any{
+						"id":             "7f8e9d0c",
+						"content_id":     "acestream://3654576326c596323675432657326c3236c59632",
+						"status":         "playing",
+						"container_id":   "8a3f9e2b1c",
+						"container_name": "ace-engine-1",
+						"active_clients": 5,
+						"bitrate":        4500000,
+						"peers":          120,
+						"speed_down":     512,
+						"speed_up":       128,
+						"started_at":     "2026-05-02T12:00:00Z",
+					},
+				},
+				"VPNNode": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"container_name": map[string]string{"type": "string"},
+						"container_id":   map[string]string{"type": "string"},
+						"status":         map[string]string{"type": "string"},
+						"healthy":        map[string]string{"type": "boolean"},
+						"provider":       map[string]string{"type": "string"},
+						"control_host":   map[string]string{"type": "string"},
+					},
+					"example": map[string]any{
+						"container_name": "gluetun-nordvpn",
+						"container_id":   "c4d5e6f7",
+						"status":         "healthy",
+						"healthy":        true,
+						"provider":       "nordvpn",
+						"control_host":   "172.18.0.2",
+					},
+				},
+				"Status": map[string]any{
+					"type": "object",
+					"example": map[string]any{
+						"status": "healthy",
+						"engines": map[string]int{
+							"total":     10,
+							"running":   8,
+							"healthy":   8,
+							"unhealthy": 0,
+							"draining":  0,
+						},
+						"streams": map[string]int{
+							"active": 15,
+							"total":  15,
+						},
+						"proxy": map[string]int{
+							"active_clients": 42,
+						},
+					},
+				},
+				"Message": map[string]any{
+					"type": "object",
+					"example": map[string]string{
+						"status":  "ok",
+						"message": "Operation completed successfully",
+					},
+				},
+			},
+		},
+		"paths": map[string]any{
+			"/api/v1/orchestrator/status": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Orchestrator"},
+					"summary": "Full system status",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Status"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/health/status": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Orchestrator"},
+					"summary": "Simplified health check",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":    "object",
+										"example": map[string]string{"status": "healthy"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/engines": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Engines"},
+					"summary": "List all provisioned AceStream engines",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "List of engines",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]string{"$ref": "#/components/schemas/Engine"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/engines/stats/all": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Engines"},
+					"summary": "Aggregated stats for all engines",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"cpu_percent_avg":    15.2,
+											"memory_usage_total": 1024000000,
+											"engine_count":       10,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/engines/{id}": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Engines"},
+					"summary": "Get engine details",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Engine"},
+								},
+							},
+						},
+						"404": map[string]any{"description": "Not Found"},
+					},
+				},
+				"delete": map[string]any{
+					"tags":     []string{"Engines"},
+					"summary":  "Dismantle an engine",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"202": map[string]any{
+							"description": "Accepted",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/engines/stats/{id}": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Engines"},
+					"summary": "Specific engine resource stats",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"cpu_percent":  12.5,
+											"memory_usage": 256000000,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/containers/{id}/logs": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "Fetch container logs",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+						{"name": "tail", "in": "query", "schema": map[string]string{"type": "string", "default": "100"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":    "array",
+										"items":   map[string]string{"type": "string"},
+										"example": []string{"[INFO] Starting AceStream engine...", "[INFO] Listening on port 8621"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/streams": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Streams"},
+					"summary": "List active playback sessions",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "List of streams",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]string{"$ref": "#/components/schemas/Stream"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/streams/batch-stop": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Streams"},
+					"summary":  "Stop multiple streams at once",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/streams/{id}": map[string]any{
+				"delete": map[string]any{
+					"tags":     []string{"Streams"},
+					"summary":  "Force stop a stream",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/streams/{id}/stats": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Streams"},
+					"summary": "Recent telemetry history for a stream",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "array",
+										"items": map[string]any{
+											"type": "object",
+											"example": map[string]any{
+												"timestamp": 1625232000,
+												"bitrate":   4500000,
+												"peers":     120,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/vpn-nodes": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"VPN"},
+					"summary": "List all VPN nodes (Gluetun containers)",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "List of VPN nodes",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]string{"$ref": "#/components/schemas/VPNNode"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/vpn/status": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"VPN"},
+					"summary": "VPN connectivity status",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"connected":    true,
+											"active_nodes": 2,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/vpn/publicip": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"VPN"},
+					"summary": "Detected public IP of the orchestrator/VPN",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":    "object",
+										"example": map[string]string{"ip": "1.2.3.4"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/settings": map[string]any{
+				"get": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Fetch all persistent settings",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"engine_settings": map[string]any{"buffer": 30},
+											"orchestrator":    map[string]any{"min_replicas": 5},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				"post": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Update multiple settings categories",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/settings/{category}": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Settings"},
+					"summary": "Get settings for a specific category",
+					"parameters": []map[string]any{
+						{"name": "category", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":    "object",
+										"example": map[string]any{"buffer": 30, "memory_mode": true},
+									},
+								},
+							},
+						},
+					},
+				},
+				"post": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Update a specific settings category",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "category", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/metrics/dashboard": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "High-level dashboard metrics snapshot",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Dashboard"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/events": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "Fetch system events history",
+					"parameters": []map[string]any{
+						{"name": "limit", "in": "query", "schema": map[string]string{"type": "integer", "default": "50"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "array",
+										"items": map[string]any{
+											"type": "object",
+											"example": map[string]any{
+												"timestamp":  "2026-05-02T12:00:00Z",
+												"event_type": "engine_started",
+												"message":    "Engine ace-engine-1 started successfully",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/events/stats": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "Aggregated event statistics",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"total_events": 150,
+											"errors":       2,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/cache/stats": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "Internal cache hit/miss statistics",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"hits":   1200,
+											"misses": 45,
+											"ratio":  0.96,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/provision": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Orchestrator"},
+					"summary":  "Manually trigger engine provisioning",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/reconcile": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Orchestrator"},
+					"summary":  "Force a state reconciliation loop",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/circuit-breaker": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Orchestrator"},
+					"summary": "Get circuit breaker state",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":    "object",
+										"example": map[string]string{"state": "closed"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/version": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Orchestrator"},
+					"summary": "Orchestrator version and build info",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]string{
+											"version":    "1.2.4",
+											"commit":     "8f3e2b1",
+											"build_time": "2026-05-01T10:00:00Z",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/gc": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Orchestrator"},
+					"summary":  "Trigger garbage collection of idle engines",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/scale/{demand}": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Orchestrator"},
+					"summary":  "Manually scale engine capacity",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "demand", "in": "path", "required": true, "schema": map[string]string{"type": "integer"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/by-label": map[string]any{
+				"get": map[string]any{
+					"tags":     []string{"Engines"},
+					"summary":  "Filter engines by Docker label",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "label", "in": "query", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]string{"$ref": "#/components/schemas/Engine"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/vpn-nodes/provision": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"VPN"},
+					"summary":  "Provision a new VPN node",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/vpn-nodes/{name}/drain": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"VPN"},
+					"summary":  "Mark a VPN node as draining",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "name", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/vpn-nodes/{name}": map[string]any{
+				"delete": map[string]any{
+					"tags":     []string{"VPN"},
+					"summary":  "Destroy a VPN node",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "name", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/settings/export": map[string]any{
+				"get": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Export all settings as a JSON bundle",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "JSON bundle",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"example": map[string]any{
+											"engine": map[string]any{"buffer": 30},
+											"vpn":    map[string]any{"enabled": true},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/settings/import": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Import a settings bundle",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "OK",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]string{"$ref": "#/components/schemas/Message"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/modify_m3u": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Streams"},
+					"summary": "Helper to proxy and modify M3U playlists",
+					"parameters": []map[string]any{
+						{"name": "url", "in": "query", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "M3U Content",
+							"content": map[string]any{
+								"text/plain": map[string]any{
+									"schema": map[string]any{
+										"type":    "string",
+										"example": "#EXTM3U\n#EXTINF:-1,Sample Stream\nhttp://orchestrator:8000/ace/getstream?id=...",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	mgWriteJSON(w, http.StatusOK, spec)
+}
+
+// ─── WireGuard parser ─────────────────────────────────────────────────────────
+
+func parseWireGuardConfig(cfg string) map[string]any {
+	result := map[string]any{
+		"private_key": "",
+		"addresses":   []string{},
+		"dns":         []string{},
+		"peers":       []map[string]any{},
+	}
+	var currentPeer map[string]any
+	for _, line := range strings.Split(cfg, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if line == "[Interface]" {
+			currentPeer = nil
+			continue
+		}
+		if line == "[Peer]" {
+			currentPeer = map[string]any{}
+			peers, _ := result["peers"].([]map[string]any)
+			peers = append(peers, currentPeer)
+			result["peers"] = peers
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if currentPeer != nil {
+			currentPeer[strings.ToLower(key)] = val
+		} else {
+			switch key {
+			case "PrivateKey":
+				result["private_key"] = val
+			case "Address":
+				addrs, _ := result["addresses"].([]string)
+				result["addresses"] = append(addrs, val)
+			case "DNS":
+				dns, _ := result["dns"].([]string)
+				result["dns"] = append(dns, val)
+			}
+		}
+	}
+	return result
+}
+
+// ─── VPN public IP ────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleVPNPublicIP(w http.ResponseWriter, r *http.Request) {
+	nodes := s.st.ListVPNNodes()
+	// Find the first healthy VPN node and query its Gluetun API for the public IP.
+	for _, n := range nodes {
+		if !n.Healthy || n.AssignedHostname == "" {
+			continue
+		}
+		gluetunPort := config.C.Load().GluetunAPIPort
+		url := fmt.Sprintf("http://%s:%d/v1/publicip/ip", n.AssignedHostname, gluetunPort)
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		resp, err := http.DefaultClient.Do(req)
+		cancel()
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+		var payload map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil {
+			if ip, ok := payload["public_ip"].(string); ok && ip != "" {
+				mgWriteJSON(w, http.StatusOK, map[string]string{"public_ip": ip})
+				return
+			}
+		}
+	}
+	mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Unable to retrieve public IP"})
+}
+
+// ─── Proxy-plane event endpoints ─────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleEventStreamStarted(w http.ResponseWriter, r *http.Request) {
+	var ev state.StreamStartedEvent
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	contentID := ev.ContentID
+	if contentID == "" && ev.Stream != nil {
+		contentID = ev.Stream.Key
+	}
+	if contentID == "" {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "content_id required"})
+		return
+	}
+	st := s.st.OnStreamStarted(ev)
+	state.RecordEvent(state.EventEntry{
+		EventType:   "stream",
+		Category:    "started",
+		Message:     "Stream started",
+		ContainerID: ev.ContainerID,
+		StreamID:    contentID,
+		Details: map[string]any{
+			"engine_id":   ev.EngineID,
+			"engine_name": ev.EngineName,
+		},
+	})
+	mgWriteJSON(w, http.StatusOK, st)
+}
+
+func (s *ProxyServer) mgHandleEventStreamEnded(w http.ResponseWriter, r *http.Request) {
+	var ev state.StreamEndedEvent
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if ev.ContentID == "" && ev.StreamID == "" {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "content_id or stream_id required"})
+		return
+	}
+	s.st.OnStreamEnded(ev)
+	state.RecordEvent(state.EventEntry{
+		EventType:   "stream",
+		Category:    "ended",
+		Message:     "Stream ended",
+		ContainerID: ev.ContainerID,
+		StreamID:    ev.ContentID,
+		Details: map[string]any{
+			"reason": ev.Reason,
+		},
+	})
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ended"})
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+func mgWriteJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("mgWriteJSON encode failed", "err", err)
+	}
+}
+
+func versionString() string {
+	if v := os.Getenv("APP_VERSION"); v != "" {
+		return v
+	}
+	return "go-unified"
+}
+
+func newLineScanner(r interface{ Read([]byte) (int, error) }) *lineScanner {
+	return &lineScanner{r: r, buf: make([]byte, 0, 4096)}
+}
+
+type lineScanner struct {
+	r    interface{ Read([]byte) (int, error) }
+	buf  []byte
+	line string
+	done bool
+}
+
+func (ls *lineScanner) Scan() bool {
+	if ls.done {
+		return false
+	}
+	for {
+		if i := strings.IndexByte(string(ls.buf), '\n'); i >= 0 {
+			ls.line = strings.TrimRight(string(ls.buf[:i]), "\r")
+			ls.buf = ls.buf[i+1:]
+			return true
+		}
+		tmp := make([]byte, 4096)
+		n, err := ls.r.Read(tmp)
+		if n > 0 {
+			ls.buf = append(ls.buf, tmp[:n]...)
+		}
+		if err != nil {
+			ls.done = true
+			if len(ls.buf) > 0 {
+				ls.line = strings.TrimRight(string(ls.buf), "\r\n")
+				ls.buf = nil
+				return ls.line != ""
+			}
+			return false
+		}
+	}
+}
+
+func (ls *lineScanner) Text() string { return ls.line }

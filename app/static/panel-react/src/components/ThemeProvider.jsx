@@ -29,6 +29,7 @@ export function ThemeProvider({ children, defaultTheme = 'light' }) {
       const resolved = getResolvedTheme()
       root.classList.remove('light', 'dark')
       root.classList.add(resolved)
+      root.dataset.theme = resolved
       setResolvedTheme(resolved)
       localStorage.setItem('theme', theme)
     }

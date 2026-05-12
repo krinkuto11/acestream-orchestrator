@@ -60,7 +60,8 @@ CORS is not enabled by default. If the panel or API is accessed from a different
 ## Data at Rest
 
 - `orchestrator.db` — SQLite database containing engine URLs, stream records, and statistics. Restrict file permissions and back it up regularly.
-- `app/config/*.json` — Persisted UI settings including the API key. Mount as a volume and protect accordingly.
+- `orchestrator.db` (inside `./config`) — SQLite database holding all UI settings, including the API key. The config volume (`./config:/app/app/config`) must be mounted and protected.
+- `app/config/*.json` — Supplementary configuration files (engine variant overrides, etc.). Not the primary settings store.
 
 ## Docker Security
 
