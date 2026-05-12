@@ -456,74 +456,51 @@ Container inspect payload (`GET /containers/{container_id}`) includes:
 
 ### Metrics
  - GET /metrics Prometheus:
-   - orch_events_started_total
-   - orch_events_ended_total
-   - orch_collect_errors_total
-   - orch_streams_active
-   - orch_provision_total{kind="generic|acestream"}
-   - orch_total_uploaded_bytes - Cumulative bytes uploaded from all engines (all-time)
-   - orch_total_downloaded_bytes - Cumulative bytes downloaded from all engines (all-time)
-   - orch_total_uploaded_mb - Cumulative MB uploaded from all engines
-   - orch_total_downloaded_mb - Cumulative MB downloaded from all engines
-   - orch_total_upload_speed_mbps - Current sum of upload speeds in MB/s
-   - orch_total_download_speed_mbps - Current sum of download speeds in MB/s
-   - orch_total_peers - Current total peers across all engines
-   - orch_total_streams - Current number of active streams
-   - orch_healthy_engines - Number of healthy engines
-   - orch_unhealthy_engines - Number of unhealthy engines
-   - orch_used_engines - Number of engines currently handling streams
-   - orch_vpn_health - Current health status of primary VPN container
-   - orch_vpn1_health - Health status of VPN1 container (redundant mode)
-   - orch_vpn2_health - Health status of VPN2 container (redundant mode)
-   - orch_vpn1_engines - Number of engines assigned to VPN1
-   - orch_vpn2_engines - Number of engines assigned to VPN2
-   - orch_extra_engines - Number of engines beyond MIN_REPLICAS
-  - orch_proxy_stream_requests_total{mode,endpoint,result} - Proxy request rate (includes upstream fetch failures labeled as endpoint `/proxy/upstream`)
-   - orch_proxy_stream_request_duration_seconds{mode,endpoint} - Proxy request duration histogram
-   - orch_proxy_ttfb_seconds{mode,endpoint} - Proxy TTFB histogram
-   - orch_proxy_http_errors_total{endpoint,status_code} - Proxy 4xx/5xx error counts
-   - orch_proxy_client_connect_total{mode} / orch_proxy_client_disconnect_total{mode} - Client lifecycle counters
-   - orch_proxy_active_clients / orch_proxy_active_clients_ts / orch_proxy_active_clients_hls - Current client counts
-   - orch_proxy_success_rate / orch_proxy_4xx_rate_per_minute / orch_proxy_5xx_rate_per_minute - 1m RED summary
-   - orch_proxy_ttfb_avg_ms / orch_proxy_ttfb_p95_ms - 1m TTFB summary
-   - orch_engine_state_count{state} / orch_engine_uptime_avg_seconds - Engine state + uptime summary
-   - orch_stream_buffer_pieces_avg / orch_stream_buffer_pieces_min - Stream buffer health summary
-   - orch_active_infohash{stream_key} - Active stream key indicator
-   - orch_docker_total_cpu_percent / orch_docker_total_memory_bytes - Docker utilization
-   - orch_docker_network_rx_bytes_total / orch_docker_network_tx_bytes_total - Docker network totals
-   - orch_docker_network_rx_rate_bps / orch_docker_network_tx_rate_bps - Docker network rates
-   - orch_docker_block_read_bytes_total / orch_docker_block_write_bytes_total - Docker disk I/O totals
-   - orch_docker_restart_total / orch_docker_oom_killed_total - Container churn/error indicators
-   - orch_global_egress_bandwidth_mbps / orch_system_success_rate - North-star summary
+
+   **Orchestrator gauges** (updated every 5 s by the background collector):
+   - `orch_active_streams` — active streams count
+   - `orch_engines_total` — total known engines
+   - `orch_engines_healthy` — healthy engines
+   - `orch_engines_unhealthy` — unhealthy engines
+   - `orch_engines_draining` — draining engines
+   - `orch_engines_used` — engines with at least one active stream
+   - `orch_vpn_nodes_total` — total VPN nodes
+   - `orch_vpn_nodes_healthy` — healthy VPN nodes
+   - `orch_vpn_nodes_draining` — draining VPN nodes
+
+   **Proxy metrics** (updated per request/connection in the proxy hot path):
+   - `acestream_proxy_http_requests_total{mode,endpoint,status_code}` — request counter
+   - `acestream_proxy_http_request_duration_seconds{mode,endpoint}` — response latency histogram
+   - `acestream_proxy_http_ttfb_seconds{mode,endpoint}` — TTFB histogram
+   - `acestream_proxy_active_sessions{mode}` — current active sessions by mode (`ts` / `hls`)
+   - `acestream_proxy_bytes_ingress_total{mode}` — bytes received from engines
+   - `acestream_proxy_bytes_egress_total{mode}` — bytes sent to clients
+   - `acestream_proxy_connections_total{mode}` — total connections established
+
+   **Control-plane counters/gauges** (updated by the engine controller):
+   - `cp_engines_total{status}` — engine count by status (`healthy` / `unhealthy` / `unknown`)
+   - `cp_desired_replicas` — current desired replica target
+   - `cp_provisioning_total{result}` — provisioning outcomes (`success` / `failed` / `blocked` / `evicted`)
+   - `cp_reconcile_total` — reconciliation loop invocations
+   - `cp_health_check_total{status}` — health check results (`healthy` / `unhealthy`)
+   - `cp_vpn_nodes_total{condition}` — VPN node count by condition (`healthy` / `draining` / `unhealthy`)
+   - `cp_intent_queue_depth` — pending scaling intents
+   - `cp_circuit_breaker_open{name}` — circuit breaker open state (`1` = open, `0` = closed)
 
  - GET /metrics/dashboard
-   - Structured JSON snapshot used by the pane-based dashboard.
+   - Structured JSON snapshot used by the panel dashboard.
    - Query params:
-     - `window_seconds` (optional): observation window for historical series. Range `60..604800`.
-     - `max_points` (optional): maximum returned points in each historical series. Range `30..2000`.
-   - Includes categories: `north_star`, `proxy`, `engines`, `streams`, `docker`, `history`.
+     - `window_seconds` (optional): observation window in seconds. Range `60..604800`. Default: `900`.
+   - Includes categories: `north_star`, `proxy`, `engines`, `streams`, `docker`.
    - Includes `observation_window_seconds` to reflect the effective window used.
    - `proxy.throughput` includes:
-     - `ingress_mbps` / `egress_mbps` (instantaneous rates)
-     - `ingress_total_bytes` / `egress_total_bytes` (process lifetime cumulative totals)
-     - `window_ingress_total_bytes` / `window_egress_total_bytes` (totals over selected `window_seconds`)
+     - `ingress_mbps` / `egress_mbps` — current rates derived from active stream stats
    - Suitable for platform-agnostic dashboards and API consumers that prefer JSON over Prometheus text format.
 
 Example:
 ```bash
-curl "http://localhost:8000/metrics/dashboard?window_seconds=3600&max_points=240"
+curl "http://localhost:8000/metrics/dashboard?window_seconds=3600"
 ```
-
-History payload fields:
-- `history.timestamps` - ISO timestamps for each sampled point
-- `history.egressMbps` - Proxy egress throughput time series
-- `history.ingressMbps` - Proxy ingress throughput time series
-- `history.activeStreams` - Active stream count time series
-- `history.activeClients` - Active client count time series
-- `history.successRate` - 1m success rate time series
-- `history.ttfbP95Ms` - 1m p95 TTFB time series
-- `history.cpuPercent` - Docker CPU percent time series
-- `history.memoryBytes` - Docker memory usage time series
 
 ## Custom Engine Variant
 

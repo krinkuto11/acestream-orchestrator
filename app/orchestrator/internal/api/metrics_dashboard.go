@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/acestream/acestream/internal/proxy/telemetry"
@@ -20,6 +21,8 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 	streamCounts := st.GetAllStreamCounts()
 
 	activeClients := 0
+	tsClients := 0
+	hlsClients := 0
 	peersTotal := 0
 	var bufferPieces []int
 	var ingressSum int
@@ -28,6 +31,11 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 	activeKeysMap := map[string]struct{}{}
 	for _, s := range streams {
 		activeClients += s.ActiveClients
+		if strings.ToUpper(s.StreamMode) == "HLS" {
+			hlsClients += s.ActiveClients
+		} else {
+			tsClients += s.ActiveClients
+		}
 		if s.Peers != nil {
 			peersTotal += *s.Peers
 		}
@@ -62,6 +70,7 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 
 	usedEngines := 0
 	var healthy, unhealthy, draining, unknown int
+	var uptimeSum float64
 	for _, e := range engines {
 		count := streamCounts[e.ContainerID]
 		if count > 0 {
@@ -77,6 +86,13 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 		default:
 			unknown++
 		}
+		if !e.FirstSeen.IsZero() {
+			uptimeSum += time.Since(e.FirstSeen).Seconds()
+		}
+	}
+	uptimeAvg := 0
+	if len(engines) > 0 {
+		uptimeAvg = int(uptimeSum / float64(len(engines)))
 	}
 
 	engineStateCounts := map[string]int{
@@ -127,8 +143,8 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 			},
 			"active_clients": map[string]any{
 				"total": activeClients,
-				"ts":    0,
-				"hls":   0,
+				"ts":    tsClients,
+				"hls":   hlsClients,
 			},
 		},
 		"engines": map[string]any{
@@ -138,7 +154,7 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 			"unknown":            unknown,
 			"used":               usedEngines,
 			"state_counts":       engineStateCounts,
-			"uptime_avg_seconds": 0,
+			"uptime_avg_seconds": uptimeAvg,
 		},
 		"streams": map[string]any{
 			"active":              len(streams),
