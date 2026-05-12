@@ -31,6 +31,16 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Stamp panel version from release tag
+      if: github.event_name == 'release'
+      run: |
+        VERSION="${GITHUB_REF##*/}"
+        VERSION="${VERSION#v}"
+        jq --arg v "$VERSION" '.version = $v' \
+          app/static/panel-react/package.json > /tmp/pkg.json
+        mv /tmp/pkg.json app/static/panel-react/package.json
+        echo "Panel version set to $VERSION"
+
     - name: Prepare platform name
       id: platform
       run: |
