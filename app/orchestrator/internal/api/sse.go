@@ -15,6 +15,7 @@ import (
 
 	"github.com/acestream/acestream/internal/config"
 	cpdocker "github.com/acestream/acestream/internal/controlplane/docker"
+	"github.com/acestream/acestream/internal/proxy/telemetry"
 	"github.com/acestream/acestream/internal/state"
 )
 
@@ -568,6 +569,23 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 		overallStatus = "healthy"
 	}
 
+	var allClients []map[string]any
+	totalClients := 0
+	for _, st := range streams {
+		if st.Status == "started" || st.Status == "prebuf" {
+			totalClients += st.ActiveClients
+			for _, c := range st.Clients {
+				cc := make(map[string]any)
+				for k, v := range c {
+					cc[k] = v
+				}
+				cc["stream_id"] = st.ID
+				cc["content_id"] = st.ContentID
+				allClients = append(allClients, cc)
+			}
+		}
+	}
+
 	orchestratorStatus := map[string]any{
 		"status": overallStatus,
 		"engines": map[string]any{
@@ -596,6 +614,21 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 			"can_provision":         canProvision,
 			"circuit_breaker_state": cbState,
 			"last_failure":          lastFailure,
+		},
+		"proxy": map[string]any{
+			"active_clients": map[string]any{
+				"total": totalClients,
+				"list":  allClients,
+			},
+			"throughput": map[string]any{
+				"egress_mbps": telemetry.DefaultTelemetry.GetEgressMbps(),
+			},
+		},
+		"config": map[string]any{
+			"auto_delete":    cfg.AutoDelete,
+			"grace_period_s": cfg.GracePeriod.Seconds(),
+			"min_replicas":   cfg.MinReplicas,
+			"max_replicas":   cfg.MaxReplicas,
 		},
 		"timestamp": time.Now().UTC(),
 	}
