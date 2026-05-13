@@ -85,7 +85,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 	airVPNPF := provider == "airvpn" && credSupportsPF && len(parseFirewallPorts(cred["firewall_vpn_input_ports"])) > 0
 	effectivePF := pfSupported || airVPNPF
 
-	env, err := buildGluetunEnv(provider, protocol, regions, cred, map[string]interface{}{}, pfSupported, true)
+	env, err := buildGluetunEnv(provider, protocol, regions, cred, map[string]interface{}{}, pfSupported, provider != "custom")
 	if err != nil {
 		p.creds.ReleaseLease(containerName)
 		return nil, fmt.Errorf("building env: %w", err)
