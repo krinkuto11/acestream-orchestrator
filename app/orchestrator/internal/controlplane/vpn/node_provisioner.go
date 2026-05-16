@@ -85,7 +85,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 	airVPNPF := provider == "airvpn" && credSupportsPF && len(parseFirewallPorts(cred["firewall_vpn_input_ports"])) > 0
 	effectivePF := pfSupported || airVPNPF
 
-	env, err := buildGluetunEnv(provider, protocol, regions, cred, map[string]interface{}{}, pfSupported, true)
+	env, err := buildGluetunEnv(provider, protocol, regions, cred, map[string]interface{}{}, pfSupported, provider != "custom")
 	if err != nil {
 		p.creds.ReleaseLease(containerName)
 		return nil, fmt.Errorf("building env: %w", err)
@@ -100,27 +100,38 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 		}
 	}
 
+	// For the custom provider, extract peer settings (endpoint, public key, etc.) from
+	// a peers[] array or raw .conf string stored in the credential, filling any env vars
+	// that applyCredentialEnv could not reach via top-level keys.
+	if provider == "custom" && protocol == "wireguard" {
+		resolveCustomWireGuardEnv(env, cred)
+	}
+
 	// Choose a safe hostname from the catalog unless the credential already pins one.
+	// Skip server selection entirely for the "custom" provider — it uses user-supplied
+	// config directly and has no catalog to select from.
 	hasExplicitPin := env["SERVER_HOSTNAMES"] != "" || env["WIREGUARD_ENDPOINTS"] != ""
 	requirePF := env["VPN_PORT_FORWARDING"] == "on"
 	catalogFile := effectiveCatalogFile(map[string]interface{}{})
 
-	if !hasExplicitPin {
-		// Collect hostnames already in use so each VPN node lands on a distinct server.
-		var activeHostnames []string
-		for _, n := range state.Global.ListVPNNodes() {
-			if n.AssignedHostname != "" {
-				activeHostnames = append(activeHostnames, n.AssignedHostname)
+	if provider != "custom" {
+		if !hasExplicitPin {
+			// Collect hostnames already in use so each VPN node lands on a distinct server.
+			var activeHostnames []string
+			for _, n := range state.Global.ListVPNNodes() {
+				if n.AssignedHostname != "" {
+					activeHostnames = append(activeHostnames, n.AssignedHostname)
+				}
+			}
+			hn := p.rep.GetSafeHostname(ctx, provider, regions, protocol, requirePF, catalogFile, activeHostnames)
+			if hn != "" {
+				env["SERVER_HOSTNAMES"] = hn
 			}
 		}
-		hn := p.rep.GetSafeHostname(ctx, provider, regions, protocol, requirePF, catalogFile, activeHostnames)
-		if hn != "" {
-			env["SERVER_HOSTNAMES"] = hn
-		}
-	}
 
-	// Apply port-forwarding filter guard — may drop incompatible server pins.
-	applyPFFilterGuard(env, provider, protocol, catalogFile, p.rep)
+		// Apply port-forwarding filter guard — may drop incompatible server pins.
+		applyPFFilterGuard(env, provider, protocol, catalogFile, p.rep)
+	}
 
 	assignedHostname := ""
 	if hn, ok := env["SERVER_HOSTNAMES"]; ok {
@@ -137,7 +148,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 		image = "qmcgaw/gluetun"
 	}
 
-	containerID, controlHost, err := p.startContainer(ctx, image, containerName, env, labels)
+	containerID, controlHost, err := p.startContainer(ctx, image, containerName, env, labels, provider != "custom")
 	if err != nil {
 		p.creds.ReleaseLease(containerName)
 		p.creds.ReleaseAirVPNPort(containerName)
@@ -265,6 +276,7 @@ func (p *Provisioner) startContainer(
 	image, name string,
 	envMap map[string]string,
 	labels map[string]string,
+	mountServersVolume bool,
 ) (containerID, controlHost string, err error) {
 	cli, err := dockerclient.NewClientWithOpts(
 		dockerclient.FromEnv,
@@ -280,6 +292,13 @@ func (p *Provisioner) startContainer(
 		envList = append(envList, k+"="+v)
 	}
 
+	var mounts []mount.Mount
+	if mountServersVolume {
+		mounts = []mount.Mount{
+			{Type: mount.TypeVolume, Source: GluetunVolumeName, Target: "/gluetun"},
+		}
+	}
+
 	hostCfg := &container.HostConfig{
 		CapAdd: []string{"NET_ADMIN"},
 		Resources: container.Resources{
@@ -287,9 +306,7 @@ func (p *Provisioner) startContainer(
 				{PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm"},
 			},
 		},
-		Mounts: []mount.Mount{
-			{Type: mount.TypeVolume, Source: GluetunVolumeName, Target: "/gluetun"},
-		},
+		Mounts:        mounts,
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 	}
 
@@ -1033,4 +1050,75 @@ func ensureImage(ctx context.Context, cli *dockerclient.Client, ref string) erro
 	}
 	slog.Info("image pulled", "image", ref)
 	return nil
+}
+
+// resolveCustomWireGuardEnv fills missing WireGuard peer env vars for the custom
+// provider by reading from a peers[] array or a raw .conf string in the credential.
+// applyCredentialEnv only reads top-level credential keys; this handles the nested
+// format produced by the parseWireGuardConfig API helper.
+func resolveCustomWireGuardEnv(env map[string]string, cred map[string]interface{}) {
+	setIfMissing := func(k, v string) {
+		if v != "" {
+			if _, exists := env[k]; !exists {
+				env[k] = v
+			}
+		}
+	}
+
+	var peer map[string]interface{}
+
+	if peers, ok := cred["peers"].([]interface{}); ok && len(peers) > 0 {
+		peer, _ = peers[0].(map[string]interface{})
+	}
+
+	if peer == nil {
+		if raw := firstStrOf(cred, "wireguard_config", "wireguard_conf", "conf", "config"); raw != "" {
+			peer = extractFirstWireGuardPeer(raw)
+		}
+	}
+
+	if peer == nil {
+		return
+	}
+
+	if ep := strVal(peer["endpoint"]); ep != "" {
+		if host, port, err := net.SplitHostPort(ep); err == nil {
+			setIfMissing("WIREGUARD_ENDPOINT_IP", host)
+			setIfMissing("WIREGUARD_ENDPOINT_PORT", port)
+		}
+	}
+	setIfMissing("WIREGUARD_PUBLIC_KEY", firstStrOf(peer, "publickey", "PublicKey", "public_key"))
+	setIfMissing("WIREGUARD_PRESHARED_KEY", firstStrOf(peer, "presharedkey", "PresharedKey", "preshared_key"))
+	setIfMissing("WIREGUARD_ALLOWED_IPS", firstStrOf(peer, "allowedips", "AllowedIPs", "allowed_ips"))
+}
+
+// extractFirstWireGuardPeer parses the [Peer] section of a raw WireGuard .conf
+// string and returns its fields as a lowercase-keyed map.
+func extractFirstWireGuardPeer(raw string) map[string]interface{} {
+	peer := map[string]interface{}{}
+	inPeer := false
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.EqualFold(line, "[Peer]") {
+			inPeer = true
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			if inPeer {
+				break
+			}
+			continue
+		}
+		if !inPeer || line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			peer[strings.ToLower(strings.TrimSpace(parts[0]))] = strings.TrimSpace(parts[1])
+		}
+	}
+	if len(peer) == 0 {
+		return nil
+	}
+	return peer
 }
