@@ -473,7 +473,7 @@ func (s *ProxyServer) mgHandleStreamExtendedStats(w http.ResponseWriter, r *http
 		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
 		return
 	}
-	mgWriteJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"available":      true,
 		"stream_id":      id,
 		"peers":          st.Peers,
@@ -485,7 +485,96 @@ func (s *ProxyServer) mgHandleStreamExtendedStats(w http.ResponseWriter, r *http
 		"livepos":        st.Livepos,
 		"active_clients": st.ActiveClients,
 		"status":         st.Status,
-	})
+	}
+	// Best-effort enrichment: report the channel name the engine itself sees
+	// via its analyze_content HTTP API. Never fail the endpoint because of it.
+	if title := s.fetchEngineStreamTitle(r.Context(), st); title != "" {
+		resp["title"] = title
+	}
+	mgWriteJSON(w, http.StatusOK, resp)
+}
+
+// extendedStatsTitleTimeout bounds the engine analyze_content call so the
+// management endpoint stays responsive even when the engine is slow.
+const extendedStatsTitleTimeout = 4 * time.Second
+
+// fetchEngineStreamTitle queries the engine serving st for the channel title
+// reported by its analyze_content API. Returns "" when unavailable.
+func (s *ProxyServer) fetchEngineStreamTitle(ctx context.Context, st *state.StreamState) string {
+	if s == nil || s.st == nil || st == nil {
+		return ""
+	}
+	eng, ok := s.st.GetEngine(st.EngineID)
+	if !ok && st.ContainerID != "" && st.ContainerID != st.EngineID {
+		eng, ok = s.st.GetEngine(st.ContainerID)
+	}
+	if !ok || eng == nil || eng.Host == "" || eng.Port <= 0 {
+		return ""
+	}
+	// Prefer the original stream key (infohash/pid) over the internal map key,
+	// which may be a hashed composite for non-trivial file indexes.
+	query := st.Key
+	if query == "" {
+		query = st.ContentID
+	}
+	if query == "" {
+		query = st.ID
+	}
+	if query == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("api_version", "3")
+	q.Set("method", "analyze_content")
+	q.Set("query", query)
+	endpoint := fmt.Sprintf("http://%s:%d/server/api?%s", eng.Host, eng.Port, q.Encode())
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, extendedStatsTitleTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(timeoutCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return ""
+	}
+	client := &http.Client{Timeout: extendedStatsTitleTimeout}
+	httpResp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, 256<<10))
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+	return parseAnalyzeContentTitle(body)
+}
+
+// parseAnalyzeContentTitle extracts the title from an engine analyze_content
+// payload, tolerating both {"title": "..."} and {"result": {"title": "..."}}
+// shapes. Returns "" when no usable title is present.
+func parseAnalyzeContentTitle(body []byte) string {
+	var top struct {
+		Title  string          `json:"title"`
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(body, &top); err != nil {
+		return ""
+	}
+	if t := strings.TrimSpace(top.Title); t != "" {
+		return t
+	}
+	if len(top.Result) == 0 {
+		return ""
+	}
+	var nested struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(top.Result, &nested); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(nested.Title)
 }
 
 func (s *ProxyServer) mgHandleStreamLivepos(w http.ResponseWriter, r *http.Request) {

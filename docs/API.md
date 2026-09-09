@@ -349,9 +349,11 @@ Response:
 
  - GET /streams/{stream_id}/stats?since=<ISO8601> → StreamStatSnapshot[]
 
- - GET /streams/{stream_id}/extended-stats → Extended stream metadata from AceStream engine
-   - Returns additional metadata like content_type, title, is_live, mime, categories, etc.
-   - Queries the AceStream analyze_content API for the stream
+  - GET /streams/{stream_id}/extended-stats → Extended stream metadata from AceStream engine
+    - Returns base stream stats (peers, speed, bitrate, livepos, status, …) plus a
+      best-effort `title` with the channel name reported by the serving engine's
+      `analyze_content` API. `title` is omitted when the engine is unreachable or
+      reports no title; the endpoint never fails because of it.
 
  - GET /streams/{stream_id}/livepos → Live position data for a stream
    - Returns livepos information including current position, buffer, and timestamps
