@@ -1,8 +1,91 @@
 package persistence
 
 import (
+	"path/filepath"
 	"testing"
 )
+
+func TestSettingsStoreReloadPreservesProxyPrebuffer(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		want  float64
+		save  bool
+	}{
+		{name: "explicit zero disables prebuffer", value: 0, want: 0, save: true},
+		{name: "default value", value: 3, want: 3, save: true},
+		{name: "positive value", value: 5, want: 5, save: true},
+		{name: "missing value uses default", want: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.db")
+			db, err := Open(path)
+			if err != nil {
+				t.Fatalf("open database: %v", err)
+			}
+			store, err := NewSettingsStore(db)
+			if err != nil {
+				db.Close()
+				t.Fatalf("create settings store: %v", err)
+			}
+			if tt.save {
+				if err := store.Save("proxy_settings", map[string]any{
+					"proxy_prebuffer_seconds": tt.value,
+				}); err != nil {
+					db.Close()
+					t.Fatalf("save proxy settings: %v", err)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatalf("close database before reload: %v", err)
+			}
+
+			db, err = Open(path)
+			if err != nil {
+				t.Fatalf("reopen database: %v", err)
+			}
+			t.Cleanup(func() { db.Close() })
+			store, err = NewSettingsStore(db)
+			if err != nil {
+				t.Fatalf("reload settings store: %v", err)
+			}
+
+			got := toFloatNorm(store.Get("proxy_settings")["proxy_prebuffer_seconds"])
+			if got != tt.want {
+				t.Errorf("proxy_prebuffer_seconds after reload = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSettingsStoreLoadStillRejectsLegacyZeroTimeout(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "settings.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	store, err := NewSettingsStore(db)
+	if err != nil {
+		t.Fatalf("create settings store: %v", err)
+	}
+
+	if _, err := db.Exec(
+		`UPDATE runtime_settings SET proxy_settings = ? WHERE id = ?`,
+		`{"connection_timeout":0}`, settingsRowID,
+	); err != nil {
+		t.Fatalf("seed legacy proxy settings: %v", err)
+	}
+	if err := store.loadCache(); err != nil {
+		t.Fatalf("reload settings cache: %v", err)
+	}
+
+	got := toIntNorm(store.Get("proxy_settings")["connection_timeout"])
+	if got != 30 {
+		t.Errorf("connection_timeout after loading legacy zero = %d, want default 30", got)
+	}
+}
 
 // ── normalizeProxySettings ────────────────────────────────────────────────────
 
@@ -85,6 +168,7 @@ func TestNormalizeProxySettings_PrebufferClamp(t *testing.T) {
 		in   any
 		want float64
 	}{
+		{float64(0), 0}, // zero explicitly disables prebuffer
 		{float64(3), 3},
 		{float64(-1), 0},   // clamp min
 		{float64(100), 30}, // clamp max
