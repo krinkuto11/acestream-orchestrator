@@ -254,7 +254,9 @@ func (s *SettingsStore) loadCache() error {
 				for k, v := range loaded {
 					// Don't override a positive numeric default with zero —
 					// a stored 0 for a timeout/interval means "unset/corrupted".
-					if defV, hasDefault := m[k]; hasDefault && isPositiveNumeric(defV) && isZeroNumeric(v) {
+					// Proxy prebuffer is the exception: zero explicitly disables it.
+					validZero := cat == "proxy_settings" && k == "proxy_prebuffer_seconds"
+					if defV, hasDefault := m[k]; hasDefault && isPositiveNumeric(defV) && isZeroNumeric(v) && !validZero {
 						continue
 					}
 					m[k] = v
